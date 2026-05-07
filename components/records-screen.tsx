@@ -1,111 +1,133 @@
-import { Home, Trophy, Star, Target } from "lucide-react";
+import { useMemo } from "react";
+import { Home, Trophy, Timer, Medal } from "lucide-react";
+import { labelForRoundLimit } from "../game-settings-storage";
+import { formatSecondsUsed, getBestVictoryRecords, type VictoryRecord } from "../records-storage";
 
 interface RecordsScreenProps {
   onBackToMenu: () => void;
 }
 
-export function RecordsScreen({ onBackToMenu }: RecordsScreenProps) {
-  // 模拟记录数据
-  const records = [
-    { level: 10, score: 1250, stars: 3, date: "2026-05-06" },
-    { level: 9, score: 1100, stars: 3, date: "2026-05-06" },
-    { level: 8, score: 980, stars: 2, date: "2026-05-05" },
-    { level: 7, score: 850, stars: 3, date: "2026-05-05" },
-    { level: 6, score: 720, stars: 2, date: "2026-05-04" },
-  ];
+function rankStyle(rank: number): string {
+  switch (rank) {
+    case 1:
+      return "from-amber-100 to-yellow-100 ring-2 ring-amber-300";
+    case 2:
+      return "from-slate-100 to-slate-200 ring-2 ring-slate-300";
+    case 3:
+      return "from-orange-50 to-amber-100 ring-2 ring-orange-200";
+    default:
+      return "from-purple-50 to-pink-50";
+  }
+}
 
-  const stats = {
-    totalGames: 45,
-    highestLevel: 10,
-    totalScore: 15680,
-    totalStars: 112,
-  };
+function medalEmoji(rank: number): string {
+  switch (rank) {
+    case 1:
+      return "🥇";
+    case 2:
+      return "🥈";
+    case 3:
+      return "🥉";
+    default:
+      return String(rank);
+  }
+}
+
+function formatLocalDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+export function RecordsScreen({ onBackToMenu }: RecordsScreenProps) {
+  const records = useMemo(() => getBestVictoryRecords(), []);
+
+  const bestEver = records[0]?.secondsUsed ?? null;
 
   return (
-    <div className="w-full max-w-2xl h-[90vh] bg-white/95 rounded-3xl shadow-2xl p-6 flex flex-col">
-      {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
+      <div className="mb-6 flex items-center justify-between">
         <button
+          type="button"
           onClick={onBackToMenu}
-          className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-xl transition-all duration-300 hover:scale-110"
+          className="rounded-xl bg-purple-500 p-3 text-white transition-all duration-300 hover:scale-110 hover:bg-purple-600"
         >
-          <Home className="w-5 h-5" />
+          <Home className="h-5 w-5" />
         </button>
-        <h2 className="text-3xl text-purple-600">游戏记录</h2>
-        <div className="w-14"></div>
+        <h2 className="text-3xl text-purple-600">通关榜</h2>
+        <div className="w-14" />
       </div>
 
-      {/* 统计数据卡片 */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-xl p-4 text-center">
-          <div className="flex items-center justify-center mb-2">
-            <Target className="w-6 h-6 text-purple-600" />
+      <div className="mb-6 grid grid-cols-2 gap-4">
+        <div className="rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 p-4 text-center">
+          <div className="mb-2 flex justify-center">
+            <Timer className="h-6 w-6 text-emerald-600" />
           </div>
-          <div className="text-3xl text-purple-700">{stats.totalGames}</div>
-          <div className="text-sm text-purple-600">总游戏次数</div>
-        </div>
-
-        <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-xl p-4 text-center">
-          <div className="flex items-center justify-center mb-2">
-            <Trophy className="w-6 h-6 text-yellow-600" />
+          <div className="text-2xl font-bold text-emerald-800">
+            {bestEver !== null ? formatSecondsUsed(bestEver) : "—"}
           </div>
-          <div className="text-3xl text-yellow-700">{stats.highestLevel}</div>
-          <div className="text-sm text-yellow-600">最高关卡</div>
+          <div className="text-sm text-emerald-700">历史最佳用时</div>
         </div>
-
-        <div className="bg-gradient-to-br from-pink-100 to-pink-200 rounded-xl p-4 text-center">
-          <div className="flex items-center justify-center mb-2">
-            <Star className="w-6 h-6 text-pink-600" />
+        <div className="rounded-xl bg-gradient-to-br from-purple-100 to-violet-100 p-4 text-center">
+          <div className="mb-2 flex justify-center">
+            <Trophy className="h-6 w-6 text-purple-600" />
           </div>
-          <div className="text-3xl text-pink-700">{stats.totalStars}</div>
-          <div className="text-sm text-pink-600">总星星数</div>
-        </div>
-
-        <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl p-4 text-center">
-          <div className="text-4xl mb-1">🎯</div>
-          <div className="text-3xl text-blue-700">{stats.totalScore}</div>
-          <div className="text-sm text-blue-600">总分数</div>
+          <div className="text-2xl font-bold text-purple-800">{records.length}</div>
+          <div className="text-sm text-purple-700">榜单记录数（最多 5 条）</div>
         </div>
       </div>
 
-      {/* 最近记录列表 */}
-      <div className="flex-1 overflow-auto">
-        <h3 className="text-xl text-purple-600 mb-3 flex items-center">
-          <span>最近记录</span>
-        </h3>
-        <div className="space-y-3">
-          {records.map((record, index) => (
-            <div
-              key={index}
-              className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 flex items-center justify-between hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-center space-x-4">
-                <div className="bg-purple-500 text-white w-12 h-12 rounded-full flex items-center justify-center">
-                  <span className="text-lg">#{record.level}</span>
-                </div>
-                <div>
-                  <div className="text-purple-700">关卡 {record.level}</div>
-                  <div className="text-sm text-purple-500">{record.date}</div>
-                </div>
-              </div>
+      <div className="mb-2 flex items-center gap-2 text-lg font-semibold text-purple-700">
+        <Medal className="h-5 w-5" />
+        <span>最快五次排行</span>
+      </div>
+      <p className="mb-4 text-sm text-gray-500">按通关用时从短到长；若不足五条则显示已有条数。</p>
 
-              <div className="text-right">
-                <div className="text-xl text-purple-700">{record.score}</div>
-                <div className="flex space-x-1 justify-end">
-                  {Array.from({ length: record.stars }).map((_, i) => (
-                    <Star key={i} className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                  ))}
+      <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
+        {records.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/50 py-16 text-center text-purple-400">
+            还没有通关记录，去清一盘吧～
+          </div>
+        ) : (
+          records.map((record: VictoryRecord, index: number) => {
+            const rank = index + 1;
+            return (
+              <div
+                key={`${record.at}-${index}`}
+                className={`flex items-center justify-between rounded-xl bg-gradient-to-r p-4 shadow-sm transition-shadow hover:shadow-md ${rankStyle(rank)}`}
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/90 text-xl shadow">
+                    {medalEmoji(rank)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold text-gray-900">
+                      第 {rank} 名 · {labelForRoundLimit(record.roundSeconds)}
+                    </div>
+                    <div className="text-sm text-gray-500">{formatLocalDate(record.at)}</div>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-mono text-xl font-bold tabular-nums text-purple-800">
+                    {formatSecondsUsed(record.secondsUsed)}
+                  </div>
+                  <div className="text-sm text-gray-600">得分 {record.score}</div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            );
+          })
+        )}
       </div>
 
-      {/* 底部装饰 */}
-      <div className="mt-4 text-center text-purple-400 text-sm">
-        继续努力，创造更好的记录！✨
-      </div>
+      <div className="mt-4 text-center text-sm text-purple-400">用时越短排名越靠前 ✨</div>
     </div>
   );
 }

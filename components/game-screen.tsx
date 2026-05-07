@@ -1,21 +1,26 @@
 import { useState } from "react";
 import { Home, Pause, RotateCcw } from "lucide-react";
+import type { VictoryPayload } from "../game-types";
 import { GameBoard } from "./game-board";
+
+export type { VictoryPayload };
 
 interface GameScreenProps {
   score: number;
   roundId: number;
+  roundSeconds: number;
   isModalOpen: boolean;
   onScoreDelta: (delta: number) => void;
   onRestartRound: () => void;
   onBackToMenu: () => void;
-  onVictory: (secondsUsed: number) => void;
+  onVictory: (payload: VictoryPayload) => void;
   onDefeat: () => void;
 }
 
 export function GameScreen({
   score,
   roundId,
+  roundSeconds,
   isModalOpen,
   onScoreDelta,
   onRestartRound,
@@ -74,6 +79,7 @@ export function GameScreen({
       <div className="relative mb-4 min-h-0 flex-1 overflow-hidden rounded-2xl border-4 border-green-300 bg-gradient-to-br from-green-100 to-emerald-100 p-2 sm:p-4">
         <GameBoard
           roundId={roundId}
+          roundSeconds={roundSeconds}
           isPaused={paused}
           isFrozen={isModalOpen}
           onScoreDelta={onScoreDelta}

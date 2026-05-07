@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ROUND_SECONDS } from "../game-constants";
+import { playSfxClear, playSfxShake } from "../game-audio";
+import type { VictoryPayload } from "../game-types";
 
 const COLS = 10;
 const ROWS = 16;
@@ -112,16 +113,17 @@ function applyClear(grid: Grid, rect: Rect): { next: Grid; cleared: number } {
 
 export interface GameBoardProps {
   roundId: number;
+  roundSeconds: number;
   isPaused: boolean;
   isFrozen: boolean;
   onScoreDelta: (delta: number) => void;
-  /** 参数为本局从开局到清盘所经过的秒数（越大表示越慢） */
-  onVictory: (secondsUsed: number) => void;
+  onVictory: (payload: VictoryPayload) => void;
   onDefeat: () => void;
 }
 
 export function GameBoard({
   roundId,
+  roundSeconds,
   isPaused,
   isFrozen,
   onScoreDelta,
@@ -132,9 +134,11 @@ export function GameBoard({
   const gridRef = useRef(grid);
   gridRef.current = grid;
 
-  const [timeLeft, setTimeLeft] = useState(ROUND_SECONDS);
+  const [timeLeft, setTimeLeft] = useState(roundSeconds);
   const timeLeftRef = useRef(timeLeft);
   timeLeftRef.current = timeLeft;
+  const roundSecondsRef = useRef(roundSeconds);
+  roundSecondsRef.current = roundSeconds;
   const [gameEnded, setGameEnded] = useState(false);
 
   const [anchor, setAnchor] = useState<{ r: number; c: number } | null>(null);
@@ -150,6 +154,8 @@ export function GameBoard({
 
   const defeatSentRef = useRef(false);
   const victorySentRef = useRef(false);
+  /** 本局累计得分（与父组件同步递增，用于通关上报） */
+  const sessionScoreRef = useRef(0);
   const gameEndedRef = useRef(gameEnded);
   const isFrozenRef = useRef(isFrozen);
   const isPausedRef = useRef(isPaused);
@@ -189,16 +195,24 @@ export function GameBoard({
       const pts = cleared * 10 + (cleared >= 4 ? 20 : 0);
       setGrid(next);
       gridRef.current = next;
+      sessionScoreRef.current += pts;
       onScoreDeltaRef.current(pts);
+      playSfxClear();
       if (filledCount(next) === 0) {
         setGameEnded(true);
         if (!victorySentRef.current) {
           victorySentRef.current = true;
-          const secondsUsed = ROUND_SECONDS - timeLeftRef.current;
-          onVictoryRef.current(secondsUsed);
+          const limit = roundSecondsRef.current;
+          const secondsUsed = limit - timeLeftRef.current;
+          onVictoryRef.current({
+            secondsUsed,
+            roundSeconds: limit,
+            finalScore: sessionScoreRef.current,
+          });
         }
       }
     } else if (filled > 0) {
+      playSfxShake();
       setShakeMask(() => {
         const mask = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
         for (let row = r.rMin; row <= r.rMax; row++) {
@@ -265,16 +279,17 @@ export function GameBoard({
     const g = makeGrid();
     setGrid(g);
     gridRef.current = g;
-    setTimeLeft(ROUND_SECONDS);
+    setTimeLeft(roundSeconds);
     setGameEnded(false);
     defeatSentRef.current = false;
     victorySentRef.current = false;
+    sessionScoreRef.current = 0;
     setAnchor(null);
     setCorner(null);
     anchorDragRef.current = null;
     cornerDragRef.current = null;
     setShakeMask(Array.from({ length: ROWS }, () => Array(COLS).fill(false)));
-  }, [roundId]);
+  }, [roundId, roundSeconds]);
 
   useEffect(() => {
     if (isPaused || isFrozen || gameEnded) return;

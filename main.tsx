@@ -5,10 +5,17 @@ import { VictoryModal } from "./components/victory-modal";
 import { DefeatModal } from "./components/defeat-modal";
 import { RecordsScreen } from "./components/records-screen";
 import { NurtureScreen } from "./components/nature-screen";
+import { SettingsScreen } from "./components/settings-screen";
 import { DEFEAT_CONSOLATION_GOLD, goldForSecondsUsed } from "./game-constants";
+import { addVictoryRecord } from "./records-storage";
+import { playSfxDefeat, playSfxVictory } from "./game-audio";
+import { useGameSettings } from "./settings-context";
+import type { VictoryPayload } from "./game-types";
 
 export default function Component() {
-  const [gameState, setGameState] = useState<"menu" | "playing" | "records" | "nurture">("menu");
+  const { settings, roundSeconds, toggleMusic } = useGameSettings();
+
+  const [gameState, setGameState] = useState<"menu" | "playing" | "records" | "nurture" | "settings">("menu");
   const [showVictory, setShowVictory] = useState(false);
   const [showDefeat, setShowDefeat] = useState(false);
   const [score, setScore] = useState(0);
@@ -57,12 +64,22 @@ export default function Component() {
     setGameState("nurture");
   };
 
-  const handleVictory = (secondsUsed: number) => {
-    const gold = goldForSecondsUsed(secondsUsed);
-    setVictorySecondsUsed(secondsUsed);
+  const handleShowSettings = () => {
+    setGameState("settings");
+  };
+
+  const handleVictory = (payload: VictoryPayload) => {
+    const gold = goldForSecondsUsed(payload.secondsUsed, payload.roundSeconds);
+    setVictorySecondsUsed(payload.secondsUsed);
     setVictoryGold(gold);
     setShowVictory(true);
     setCoins((c) => c + gold);
+    playSfxVictory();
+    addVictoryRecord({
+      secondsUsed: payload.secondsUsed,
+      roundSeconds: payload.roundSeconds,
+      score: payload.finalScore,
+    });
   };
 
   const handleDefeat = () => {
@@ -70,6 +87,7 @@ export default function Component() {
     defeatOpenedRef.current = true;
     setShowDefeat(true);
     setCoins((c) => c + DEFEAT_CONSOLATION_GOLD);
+    playSfxDefeat();
   };
 
   const handleRetry = () => {
@@ -165,13 +183,24 @@ export default function Component() {
   return (
     <div className="flex h-screen w-full items-center justify-center overflow-hidden bg-gradient-to-br from-green-300 via-emerald-200 to-teal-300">
       {gameState === "menu" && (
-        <MainMenu onStartGame={handleStartGame} onShowRecords={handleShowRecords} onShowNurture={handleShowNurture} coins={coins} />
+        <MainMenu
+          onStartGame={handleStartGame}
+          onShowRecords={handleShowRecords}
+          onShowNurture={handleShowNurture}
+          onShowSettings={handleShowSettings}
+          coins={coins}
+          musicEnabled={settings.musicEnabled}
+          onToggleMusic={() => {
+            toggleMusic();
+          }}
+        />
       )}
 
       {gameState === "playing" && (
         <GameScreen
           score={score}
           roundId={roundId}
+          roundSeconds={roundSeconds}
           isModalOpen={modalOpen}
           onScoreDelta={(delta) => setScore((s) => s + delta)}
           onRestartRound={handleRestartRound}
@@ -182,6 +211,8 @@ export default function Component() {
       )}
 
       {gameState === "records" && <RecordsScreen onBackToMenu={handleBackToMenu} />}
+
+      {gameState === "settings" && <SettingsScreen onBackToMenu={handleBackToMenu} />}
 
       {gameState === "nurture" && (
         <NurtureScreen

@@ -1,13 +1,13 @@
-/** 单局限时时长（秒） */
-export const ROUND_SECONDS = 120;
+/** 参照难度「困难」档的单局限时（秒），仅作文档 / 公式锚点 */
+export const ROUND_SECONDS_HARD = 120;
 
 /**
- * 过关金币：依据本局从开局到清盘所消耗的秒数（越少越快，金币越多）。
- * 公式可调：当前为 600 - 3×秒数，并设上下限。
+ * 过关金币：依据本局用时与本局限时时长；不同时长的关卡按 `roundSeconds` 缩放基础奖励。
  */
-export function goldForSecondsUsed(secondsUsed: number): number {
-  const u = Math.min(ROUND_SECONDS, Math.max(0, secondsUsed));
-  return Math.max(30, Math.round(600 - u * 3));
+export function goldForSecondsUsed(secondsUsed: number, roundSeconds: number): number {
+  const u = Math.min(roundSeconds, Math.max(0, secondsUsed));
+  const scale = roundSeconds / ROUND_SECONDS_HARD;
+  return Math.max(30, Math.round(600 * scale - u * 3));
 }
 
 /** 时间耗尽失败时固定赠送的安慰金币 */
