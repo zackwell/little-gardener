@@ -1,57 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { playSfxClear, playSfxShake } from "../game-audio";
-import type { VictoryPayload } from "../game-types";
-
-const COLS = 10;
-const ROWS = 16;
-
-type Grid = (number | null)[][];
-
-type Rect = { rMin: number; rMax: number; cMin: number; cMax: number };
-
-function gridDigitSum(g: Grid): number {
-  let s = 0;
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (g[r][c] !== null) s += g[r][c]!;
-    }
-  }
-  return s;
-}
-
-/** 调整某一格，使全盘数字之和为 10 的倍数（全清的必要条件） */
-function fixGridSumDivisibleBy10(g: Grid): Grid {
-  const next = g.map((row) => [...row]) as Grid;
-  const sum = gridDigitSum(next);
-  const need = (10 - (sum % 10)) % 10;
-  if (need === 0) return next;
-
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const v = next[r][c]!;
-      for (const nv of [v + need, v + need - 10, v + need + 10]) {
-        if (nv >= 1 && nv <= 9) {
-          next[r][c] = nv;
-          return next;
-        }
-      }
-    }
-  }
-  return next;
-}
-
-function makeGrid(): Grid {
-  for (let attempt = 0; attempt < 150; attempt++) {
-    const raw = Array.from({ length: ROWS }, () =>
-      Array.from({ length: COLS }, () => 1 + Math.floor(Math.random() * 9)),
-    );
-    if (gridDigitSum(raw) % 10 === 0) return raw;
-  }
-  const fallback = Array.from({ length: ROWS }, () =>
-    Array.from({ length: COLS }, () => 1 + Math.floor(Math.random() * 9)),
-  );
-  return fixGridSumDivisibleBy10(fallback);
-}
+import type { DefeatPayload, VictoryPayload } from "../game-types";
+import {
+  COLS,
+  ROWS,
+  applyClear,
+  countFilledInRect,
+  filledCount,
+  hasAnyValidMove,
+  makeSolvableGrid,
+  rectSum,
+  type Grid,
+  type Rect,
+} from "../game-grid-gen";
+import numberCageUrl from "../pics/numbercage.png";
 
 function makeRect(
   a: { r: number; c: number } | null,
@@ -66,51 +28,6 @@ function makeRect(
   };
 }
 
-function rectSum(grid: Grid, rect: Rect): number {
-  let s = 0;
-  for (let r = rect.rMin; r <= rect.rMax; r++) {
-    for (let c = rect.cMin; c <= rect.cMax; c++) {
-      const v = grid[r][c];
-      if (v !== null) s += v;
-    }
-  }
-  return s;
-}
-
-function countFilledInRect(grid: Grid, rect: Rect): number {
-  let n = 0;
-  for (let r = rect.rMin; r <= rect.rMax; r++) {
-    for (let c = rect.cMin; c <= rect.cMax; c++) {
-      if (grid[r][c] !== null) n++;
-    }
-  }
-  return n;
-}
-
-function filledCount(grid: Grid): number {
-  let n = 0;
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (grid[r][c] !== null) n++;
-    }
-  }
-  return n;
-}
-
-function applyClear(grid: Grid, rect: Rect): { next: Grid; cleared: number } {
-  const next = grid.map((row) => [...row]);
-  let cleared = 0;
-  for (let r = rect.rMin; r <= rect.rMax; r++) {
-    for (let c = rect.cMin; c <= rect.cMax; c++) {
-      if (next[r][c] !== null) {
-        next[r][c] = null;
-        cleared++;
-      }
-    }
-  }
-  return { next, cleared };
-}
-
 export interface GameBoardProps {
   roundId: number;
   roundSeconds: number;
@@ -118,7 +35,7 @@ export interface GameBoardProps {
   isFrozen: boolean;
   onScoreDelta: (delta: number) => void;
   onVictory: (payload: VictoryPayload) => void;
-  onDefeat: () => void;
+  onDefeat: (payload: DefeatPayload) => void;
 }
 
 export function GameBoard({
@@ -130,7 +47,7 @@ export function GameBoard({
   onVictory,
   onDefeat,
 }: GameBoardProps) {
-  const [grid, setGrid] = useState<Grid>(() => makeGrid());
+  const [grid, setGrid] = useState<Grid>(() => makeSolvableGrid());
   const gridRef = useRef(grid);
   gridRef.current = grid;
 
@@ -276,7 +193,7 @@ export function GameBoard({
   };
 
   useEffect(() => {
-    const g = makeGrid();
+    const g = makeSolvableGrid();
     setGrid(g);
     gridRef.current = g;
     setTimeLeft(roundSeconds);
@@ -308,11 +225,20 @@ export function GameBoard({
   useEffect(() => {
     if (timeLeft === 0 && gameEnded && !defeatSentRef.current) {
       defeatSentRef.current = true;
-      onDefeatRef.current();
+      const payload: DefeatPayload = {
+        cellsRemaining: filledCount(gridRef.current),
+        roundSeconds: roundSecondsRef.current,
+      };
+      onDefeatRef.current(payload);
     }
   }, [timeLeft, gameEnded]);
 
   const cellsLeft = filledCount(grid);
+
+  const deadlock = useMemo(
+    () => !gameEnded && cellsLeft > 0 && !hasAnyValidMove(grid),
+    [gameEnded, cellsLeft, grid],
+  );
 
   const isInRect = (r: number, c: number) => {
     if (!rect) return false;
@@ -323,7 +249,7 @@ export function GameBoard({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col touch-none select-none">
-      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-emerald-800 sm:text-sm">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 text-sm text-emerald-800 sm:text-base">
         <div className="rounded-lg bg-white/80 px-2 py-1 shadow-sm sm:px-3 sm:py-1.5">
           框内和：<span className="font-bold tabular-nums text-emerald-700">{rect ? selectionSum : 0}</span>
         </div>
@@ -335,7 +261,29 @@ export function GameBoard({
         </div>
       </div>
 
-      <div className="grid min-h-0 w-full flex-1 gap-0.5 [grid-template-columns:repeat(10,minmax(0,1fr))] [grid-template-rows:repeat(16,minmax(0,1fr))] rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1 sm:gap-1 sm:p-1.5">
+      {deadlock && (
+        <div className="mb-2 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-center text-sm text-amber-900 sm:text-base">
+          当前没有能凑成 10 的框选，局面可能已被「拆碎」。请点上方<strong className="mx-1">重新开始本局</strong>
+          换一盘（新盘由矩阵块拼成、保证有解，乱消仍可能走进死胡同）。
+        </div>
+      )}
+
+      {/*
+        固定棋盘宽高比；用容器查询同时吃满「可用宽」与「可用高」，横竖拖动都不会把格子拉变形。
+        width = min(容器宽, 容器高 × COLS/ROWS) 等价于整盘塞进容器内的最大等比例尺寸。
+      */}
+      <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center [container-type:size]">
+        <div
+          className="grid gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
+          style={{
+            aspectRatio: `${COLS} / ${ROWS}`,
+            gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))`,
+            width: `min(100cqw, calc(100cqh * ${COLS} / ${ROWS}))`,
+            height: "auto",
+            maxWidth: "100%",
+          }}
+        >
         {grid.map((row, r) =>
           row.map((val, c) => {
             const inSel = isInRect(r, c);
@@ -350,22 +298,24 @@ export function GameBoard({
                 disabled={inputLocked}
                 onPointerDown={handlePointerDown(r, c)}
                 className={[
-                  "flex min-h-0 min-w-0 items-center justify-center rounded-[5px] text-[clamp(9px,2.4vw,12px)] font-bold tabular-nums transition-transform sm:rounded-md sm:text-[clamp(10px,2.6vw,13px)]",
+                  "flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[5px] text-[clamp(11px,2.6vw,14px)] font-bold tabular-nums transition-transform sm:rounded-md sm:text-[clamp(12px,2.8vw,15px)]",
                   empty
                     ? "cursor-default bg-emerald-100/35 text-transparent shadow-none"
-                    : "bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-sm active:scale-95",
-                  !empty && inSel ? "z-[1] scale-[1.02] ring-2 ring-sky-400 ring-offset-1" : "",
+                    : "cursor-pointer bg-emerald-600 bg-contain bg-center bg-no-repeat text-white shadow-sm [text-shadow:0_1px_2px_rgba(0,0,0,0.55)] active:scale-95",
+                  !empty && inSel ? "z-[1] scale-[1.02] ring-2 ring-sky-300 ring-offset-0" : "",
                   shake ? "animate-[cell-shake_0.35s_ease]" : "",
                   inputLocked && !empty ? "opacity-70" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
+                style={!empty ? { backgroundImage: `url(${numberCageUrl})` } : undefined}
               >
                 {!empty ? val : ""}
               </button>
             );
           }),
         )}
+        </div>
       </div>
 
       <style>{`

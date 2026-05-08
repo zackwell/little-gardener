@@ -2,8 +2,13 @@
  * Web Audio：可选背景音乐（音频文件）+ 短音效。需在用户手势后 resume（浏览器策略）。
  */
 
-/** 背景音乐资源路径；留空则不播放。后续可把 mp3/ogg 放到 `public/` 下并改成 `/your-bgm.mp3`。 */
-export const BACKGROUND_MUSIC_URL = "";
+import mainMenuMusicUrl from "./music/花园方块乐园main-menu.mp3?url";
+import gameplayMusicUrl from "./music/花园方块乐园gameplay.mp3?url";
+import nurtureGreenhouseMusicUrl from "./music/嫩芽工坊greenhouse.mp3?url";
+import nurtureShopMusicUrl from "./music/花园商店store.mp3?url";
+
+/** menu：主菜单/记录/设置；playing：对局；养成页按子页切换 greenhouse / shop */
+export type MusicScene = "menu" | "playing" | "nurture_greenhouse" | "nurture_shop";
 
 type AudioOpts = {
   musicEnabled: boolean;
@@ -12,10 +17,33 @@ type AudioOpts = {
 };
 
 let opts: AudioOpts = { musicEnabled: false, sfxEnabled: true, volume: 0.75 };
+/** 主菜单 / 记录 / 设置 使用菜单曲；对局游戏曲；养成页为嫩芽工坊 / 花园商店 */
+let musicScene: MusicScene = "menu";
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 /** 循环 BGM（有 URL 时使用） */
 let bgmAudio: HTMLAudioElement | null = null;
+
+function activeMusicUrl(): string {
+  switch (musicScene) {
+    case "playing":
+      return gameplayMusicUrl;
+    case "nurture_greenhouse":
+      return nurtureGreenhouseMusicUrl;
+    case "nurture_shop":
+      return nurtureShopMusicUrl;
+    case "menu":
+    default:
+      return mainMenuMusicUrl;
+  }
+}
+
+/** 切换 BGM 曲目（需在开启音乐时才会出声） */
+export function setMusicScene(scene: MusicScene): void {
+  if (musicScene === scene) return;
+  musicScene = scene;
+  refreshMusic();
+}
 
 function ensureGraph(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -59,7 +87,7 @@ function stopMusic(): void {
 
 function refreshMusic(): void {
   stopMusic();
-  const url = BACKGROUND_MUSIC_URL.trim();
+  const url = activeMusicUrl().trim();
   if (!url || !opts.musicEnabled || opts.volume <= 0.001) return;
 
   const el = new Audio(url);

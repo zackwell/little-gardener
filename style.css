@@ -4,6 +4,11 @@
   box-sizing: border-box;
 }
 
+/* 独立 HTML 页（如 static-sum10）与主应用 index.css 保持相近阅读尺寸 */
+html {
+  font-size: 115%;
+}
+
 html,
 body {
   height: 100%;
@@ -51,26 +56,26 @@ body {
 }
 
 .label {
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 0.02em;
   color: #98a3ba;
 }
 
 .stat strong {
-  font-size: 22px;
+  font-size: 26px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
 
 .unit {
-  font-size: 12px;
+  font-size: 14px;
   color: #98a3ba;
   margin-left: 2px;
 }
 
 .hint {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   color: #aeb8ce;
   text-align: center;
@@ -102,7 +107,7 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  font-size: clamp(11px, 2.6vw, 15px);
+  font-size: clamp(12px, 2.8vw, 17px);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   background: linear-gradient(145deg, #3d4b6b, #2a3349);
@@ -196,7 +201,7 @@ body {
 
 .modal h2 {
   margin: 0 0 10px;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .modal-score {
@@ -206,5 +211,5 @@ body {
 
 .modal-score strong {
   color: #f2f5ff;
-  font-size: 22px;
+  font-size: 26px;
 }

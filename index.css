@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html {
+    @apply font-sans antialiased;
+    /* 略放大全局正文字号（Tailwind 以 rem 计） */
+    font-size: 115%;
+  }
+}
+
 html,
 body,
 #root {

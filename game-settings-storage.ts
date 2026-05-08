@@ -12,8 +12,7 @@ const STORAGE_KEY = "little-gardener-settings-v1";
 
 export const DEFAULT_SETTINGS: GameSettings = {
   difficulty: "hard",
-  /** 暂无正式 BGM 文件时默认关闭；接入音频后可改为 true */
-  musicEnabled: false,
+  musicEnabled: true,
   sfxEnabled: true,
   volume: 0.75,
 };

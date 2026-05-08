@@ -37,13 +37,16 @@ export function DefeatModal({ score, consolationGold, onRetry, onBackToMenu }: D
           </div>
         </div>
 
-        <div className="mb-6 flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-50 to-yellow-100 px-4 py-3">
+        <div className="mb-2 flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-50 to-yellow-100 px-4 py-3">
           <div className="flex items-center gap-2">
             <Coins className="h-5 w-5 text-amber-600" />
             <span className="text-amber-900">安慰奖励</span>
           </div>
           <span className="text-2xl font-semibold text-amber-700">+{consolationGold}</span>
         </div>
+        <p className="mb-6 text-center text-xs text-gray-500">
+          进度越高、所选难度越高，安慰金币越多
+        </p>
 
         {/* 鼓励语 */}
         <div className="bg-blue-50 rounded-xl p-4 mb-6 text-center">

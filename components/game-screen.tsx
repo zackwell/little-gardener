@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Home, Pause, RotateCcw } from "lucide-react";
-import type { VictoryPayload } from "../game-types";
+import type { DefeatPayload, VictoryPayload } from "../game-types";
 import { GameBoard } from "./game-board";
 
-export type { VictoryPayload };
+export type { DefeatPayload, VictoryPayload };
 
 interface GameScreenProps {
   score: number;
@@ -14,7 +14,7 @@ interface GameScreenProps {
   onRestartRound: () => void;
   onBackToMenu: () => void;
   onVictory: (payload: VictoryPayload) => void;
-  onDefeat: () => void;
+  onDefeat: (payload: DefeatPayload) => void;
 }
 
 export function GameScreen({
@@ -31,7 +31,7 @@ export function GameScreen({
   const [paused, setPaused] = useState(false);
 
   return (
-    <div className="flex h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white/95 p-4 shadow-2xl sm:p-6">
+    <div className="flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white/85 p-4 shadow-2xl backdrop-blur-md ring-1 ring-white/50 sm:bg-white/80 sm:p-6">
       <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button
