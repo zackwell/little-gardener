@@ -269,19 +269,20 @@ export function GameBoard({
       )}
 
       {/*
-        固定棋盘宽高比；用容器查询同时吃满「可用宽」与「可用高」，横竖拖动都不会把格子拉变形。
-        width = min(容器宽, 容器高 × COLS/ROWS) 等价于整盘塞进容器内的最大等比例尺寸。
+        固定棋盘宽高比；用 max-width/max-height + aspect-ratio 在可用区域内取最大内接矩形。
+        避免依赖 100cqw/100cqh：部分移动浏览器对容器查询单位支持差时 width 失效，格子会被纵向拉变形。
       */}
-      <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center [container-type:size]">
+      <div className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center">
         <div
-          className="grid gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
+          className="grid min-h-0 min-w-0 max-h-full max-w-full gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
           style={{
             aspectRatio: `${COLS} / ${ROWS}`,
             gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))`,
-            width: `min(100cqw, calc(100cqh * ${COLS} / ${ROWS}))`,
+            width: "auto",
             height: "auto",
             maxWidth: "100%",
+            maxHeight: "100%",
           }}
         >
         {grid.map((row, r) =>

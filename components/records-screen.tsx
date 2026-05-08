@@ -53,7 +53,7 @@ export function RecordsScreen({ onBackToMenu }: RecordsScreenProps) {
   const bestEver = records[0]?.secondsUsed ?? null;
 
   return (
-    <div className="flex h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
+    <div className="panel-90 flex min-h-0 w-full max-w-2xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
       <div className="mb-6 flex items-center justify-between">
         <button
           type="button"

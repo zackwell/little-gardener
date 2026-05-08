@@ -31,7 +31,7 @@ export function GameScreen({
   const [paused, setPaused] = useState(false);
 
   return (
-    <div className="flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white/85 p-4 shadow-2xl backdrop-blur-md ring-1 ring-white/50 sm:bg-white/80 sm:p-6">
+    <div className="panel-90 flex min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white/85 p-4 shadow-2xl backdrop-blur-md ring-1 ring-white/50 sm:bg-white/80 sm:p-6">
       <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
         <div className="flex items-center space-x-3 sm:space-x-4">
           <button

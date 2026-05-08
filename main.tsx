@@ -458,7 +458,7 @@ export default function Component() {
 
   return (
     <div
-      className={`flex h-screen w-full items-center justify-center overflow-hidden ${
+      className={`app-shell flex min-h-0 w-full items-center justify-center overflow-hidden ${
         playingBg ? "bg-cover bg-center bg-no-repeat" : "bg-gradient-to-br from-green-300 via-emerald-200 to-teal-300"
       }`}
       style={playingBg ? { backgroundImage: `url(${gameplayBgUrl})` } : undefined}

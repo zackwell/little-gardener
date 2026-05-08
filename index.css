@@ -8,6 +8,13 @@
     /* 略放大全局正文字号（Tailwind 以 rem 计） */
     font-size: 115%;
   }
+
+  /* 窄屏略收回根字号，减轻手机端「整体被放大 / 撑满」感 */
+  @media (max-width: 640px) {
+    html {
+      font-size: 100%;
+    }
+  }
 }
 
 html,
@@ -15,4 +22,20 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* 动态视口高度：先 vh 兜底再 dvh，减轻 Safari / Chrome 地址栏导致的纵向拉伸 */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.panel-90 {
+  height: 90vh;
+  height: 90dvh;
+}
+
+.max-h-panel-90 {
+  max-height: 90vh;
+  max-height: 90dvh;
 }

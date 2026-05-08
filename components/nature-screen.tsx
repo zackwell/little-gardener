@@ -136,7 +136,7 @@ export function NurtureScreen({
   const waterHint = formatWateringRemainShort(wateringBoostUntil);
 
   return (
-    <div className="w-full max-w-4xl h-[90vh] bg-white/95 rounded-3xl shadow-2xl p-6 flex flex-col">
+    <div className="panel-90 flex min-h-0 w-full max-w-4xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-6">
         <button
@@ -936,7 +936,7 @@ export function NurtureScreen({
           onClick={() => setShopSeedDetailId(null)}
         >
           <div
-            className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="max-h-panel-90 relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -994,7 +994,7 @@ export function NurtureScreen({
           onClick={() => setShopItemDetailId(null)}
         >
           <div
-            className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="max-h-panel-90 relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <button
