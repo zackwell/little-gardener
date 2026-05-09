@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { playSfxClear, playSfxShake } from "../game-audio";
 import type { DefeatPayload, VictoryPayload } from "../game-types";
 import {
@@ -64,6 +64,9 @@ export function GameBoard({
   const cornerDragRef = useRef<{ r: number; c: number } | null>(null);
   const draggingRef = useRef(false);
   const pointerIdRef = useRef<number | null>(null);
+  /** 棋盘区 DOM，用于测量可用宽高（避免纯 CSS 在部分 WebKit 上把棋盘缩成极小） */
+  const boardAreaRef = useRef<HTMLDivElement>(null);
+  const [boardPx, setBoardPx] = useState({ w: 0, h: 0 });
 
   const [shakeMask, setShakeMask] = useState<boolean[][]>(() =>
     Array.from({ length: ROWS }, () => Array(COLS).fill(false)),
@@ -240,6 +243,28 @@ export function GameBoard({
     [gameEnded, cellsLeft, grid],
   );
 
+  useLayoutEffect(() => {
+    const el = boardAreaRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      const availW = el.clientWidth;
+      const availH = el.clientHeight;
+      if (availW < 2 || availH < 2) return;
+      const whRatio = COLS / ROWS;
+      const w = Math.min(availW, availH * whRatio);
+      const h = w / whRatio;
+      setBoardPx((prev) =>
+        Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5 ? prev : { w, h },
+      );
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [roundId, deadlock]);
+
   const isInRect = (r: number, c: number) => {
     if (!rect) return false;
     return r >= rect.rMin && r <= rect.rMax && c >= rect.cMin && c <= rect.cMax;
@@ -269,20 +294,23 @@ export function GameBoard({
       )}
 
       {/*
-        固定棋盘宽高比；用 max-width/max-height + aspect-ratio 在可用区域内取最大内接矩形。
-        避免依赖 100cqw/100cqh：部分移动浏览器对容器查询单位支持差时 width 失效，格子会被纵向拉变形。
+        固定棋盘宽高比；用 ResizeObserver 按「可用区域像素」算最大内接矩形。
+        纯 CSS（auto + max-height:100% 等）在部分手机 WebKit 上会把可用高解析得过小，棋盘缩成一团。
       */}
-      <div className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center">
+      <div
+        ref={boardAreaRef}
+        className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center"
+      >
         <div
-          className="grid min-h-0 min-w-0 max-h-full max-w-full gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
+          className="grid min-h-0 min-w-0 gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
           style={{
+            boxSizing: "border-box",
+            width: boardPx.w > 0 ? `${boardPx.w}px` : "100%",
+            height: boardPx.h > 0 ? `${boardPx.h}px` : "auto",
+            maxWidth: "100%",
             aspectRatio: `${COLS} / ${ROWS}`,
             gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${ROWS}, minmax(0, 1fr))`,
-            width: "auto",
-            height: "auto",
-            maxWidth: "100%",
-            maxHeight: "100%",
           }}
         >
         {grid.map((row, r) =>
