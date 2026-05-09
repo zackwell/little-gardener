@@ -247,22 +247,28 @@ export function GameBoard({
     const el = boardAreaRef.current;
     if (!el) return;
 
-    const measure = () => {
-      const availW = el.clientWidth;
-      const availH = el.clientHeight;
-      if (availW < 2 || availH < 2) return;
-      const whRatio = COLS / ROWS;
-      const w = Math.min(availW, availH * whRatio);
-      const h = w / whRatio;
-      setBoardPx((prev) =>
-        Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5 ? prev : { w, h },
-      );
+    let rafId = 0;
+    /** 放到下一帧再量，避免 RO→setState→布局 同步循环被浏览器判为异常（本地 Chrome 偶发白屏/卡死） */
+    const scheduleMeasure = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const availW = el.clientWidth;
+        const availH = el.clientHeight;
+        if (availW < 2 || availH < 2) return;
+        const whRatio = COLS / ROWS;
+        const w = Math.round(Math.min(availW, availH * whRatio));
+        const h = Math.round(w / whRatio);
+        setBoardPx((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+      });
     };
 
-    measure();
-    const ro = new ResizeObserver(measure);
+    scheduleMeasure();
+    const ro = new ResizeObserver(() => scheduleMeasure());
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, [roundId, deadlock]);
 
   const isInRect = (r: number, c: number) => {
@@ -302,7 +308,7 @@ export function GameBoard({
         className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center"
       >
         <div
-          className="grid min-h-0 min-w-0 gap-1 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-1.5 sm:gap-1.5 sm:p-2"
+          className="grid min-h-0 min-w-0 gap-2 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-2 sm:gap-1.5 sm:p-2"
           style={{
             boxSizing: "border-box",
             width: boardPx.w > 0 ? `${boardPx.w}px` : "100%",

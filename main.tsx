@@ -469,7 +469,6 @@ export default function Component() {
           onShowRecords={handleShowRecords}
           onShowNurture={handleShowNurture}
           onShowSettings={handleShowSettings}
-          coins={coins}
           musicEnabled={settings.musicEnabled}
           onToggleMusic={() => {
             toggleMusic();

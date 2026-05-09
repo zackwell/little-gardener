@@ -1,4 +1,4 @@
-import { BookOpen, Coins, Flower2, Play, Settings, Volume2, VolumeX } from "lucide-react";
+import { BookOpen, Flower2, Play, Settings, Volume2, VolumeX } from "lucide-react";
 import buttonBgUrl from "../pics/button.png";
 import logoUrl from "../pics/logo.png";
 import mainMenuBgUrl from "../pics/main-menu.png";
@@ -8,7 +8,6 @@ interface MainMenuProps {
   onShowRecords: () => void;
   onShowNurture: () => void;
   onShowSettings: () => void;
-  coins: number;
   musicEnabled: boolean;
   onToggleMusic: () => void;
 }
@@ -18,7 +17,6 @@ export function MainMenu({
   onShowRecords,
   onShowNurture,
   onShowSettings,
-  coins,
   musicEnabled,
   onToggleMusic,
 }: MainMenuProps) {
@@ -44,24 +42,20 @@ export function MainMenu({
       style={{ backgroundImage: `url(${mainMenuBgUrl})` }}
     >
       <div className="pointer-events-none absolute inset-0 bg-black/12" aria-hidden />
-      <div className="absolute top-8 right-8 z-20 flex items-center gap-2">
+      <div className="absolute top-5 right-5 z-20 flex items-center sm:top-8 sm:right-8">
         <button
           type="button"
           onClick={onToggleMusic}
           title={musicEnabled ? "关闭背景音乐" : "开启背景音乐"}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg transition-all hover:scale-105 hover:bg-white"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-md transition-all hover:scale-105 hover:bg-white sm:h-11 sm:w-11 sm:shadow-lg"
           aria-pressed={musicEnabled}
         >
           {musicEnabled ? (
-            <Volume2 className="h-6 w-6 text-emerald-600" />
+            <Volume2 className="h-[18px] w-[18px] text-emerald-600 sm:h-5 sm:w-5" />
           ) : (
-            <VolumeX className="h-6 w-6 text-gray-500" />
+            <VolumeX className="h-[18px] w-[18px] text-gray-500 sm:h-5 sm:w-5" />
           )}
         </button>
-        <div className="flex items-center space-x-2 rounded-full bg-white/90 px-5 py-3 shadow-lg">
-          <Coins className="h-6 w-6 text-yellow-500" />
-          <span className="text-2xl text-yellow-600">{coins}</span>
-        </div>
       </div>
 
       <div className="relative z-10 flex w-full max-w-lg flex-col items-center space-y-10">
