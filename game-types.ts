@@ -10,3 +10,9 @@ export interface DefeatPayload {
   cellsRemaining: number;
   roundSeconds: number;
 }
+
+/** 收获结算弹窗：展示本次获得的果实与藏品 */
+export interface HarvestRewardPayload {
+  fruits: Array<{ id: string; name: string; count: number }>;
+  collectibles: Array<{ id: string; name: string; count: number }>;
+}

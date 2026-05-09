@@ -22,13 +22,18 @@ export const SUN_GROWTH_MULT = 1.35;
 export const WATERING_GROWTH_MULT = 1.18;
 export const WATERING_BOOST_DURATION_MS = 10 * 60 * 1000;
 
-/** 肥料：单株每次叠乘；同一植株最多使用次数 */
+/** 旧存档迁移用：历史上肥料按叠乘计入进度 */
 export const FERTILIZER_GROWTH_MULT = 1.3;
 export const FERTILIZER_MAX_USES_PER_PLANT = 3;
+/** 肥料：每次直接推进总生长期的比例（仅肥料；与日照等加速分开累计） */
+export const FERTILIZER_DIRECT_DURATION_RATIO = 0.2;
 
 /** 收获倍率：槽位土壤（高级 < 超级） */
 export const ADVANCED_SOIL_HARVEST_MULT = 1.5;
 export const SUPER_SOIL_HARVEST_MULT = 2;
+
+/** 园艺手套：在土壤结算后的果实数量上再乘此项（严格 ×2） */
+export const GARDEN_GLOVES_HARVEST_MULT = 2;
 
 /** 控温器：单槽生长加速（与日照、浇水、肥料叠乘） */
 export const THERMOSTAT_GROWTH_MULT = 1.55;
@@ -53,7 +58,7 @@ export const SHOP_ITEMS: ShopItemDef[] = [
     name: "园艺手套",
     emoji: "🧤",
     price: 300,
-    description: "收成前戴好手套，下一茬摘得更尽兴。",
+    description: "戴上它干活再也不累了。",
     kind: "permanent",
   },
   {
@@ -61,7 +66,7 @@ export const SHOP_ITEMS: ShopItemDef[] = [
     name: "模拟太阳",
     emoji: "☀️",
     price: 800,
-    description: "补足光照，需要时可以关上。",
+    description: "贴心小太阳，培育植株不可或缺的小帮手。",
     kind: "permanent",
   },
   {
@@ -76,8 +81,8 @@ export const SHOP_ITEMS: ShopItemDef[] = [
     id: ITEM_FERTILIZER,
     name: "肥料",
     emoji: "🧪",
-    price: 35,
-    description: "给正在长的植株追肥，别贪杯。",
+    price: 100,
+    description: "快快长大。",
     kind: "consumable",
   },
   {
@@ -85,7 +90,7 @@ export const SHOP_ITEMS: ShopItemDef[] = [
     name: "控温器",
     emoji: "🌡️",
     price: 95,
-    description: "盯住一株，让它长得更稳当。",
+    description: "专制挑剔温度的植物。",
     kind: "consumable",
   },
   {
@@ -93,23 +98,23 @@ export const SHOP_ITEMS: ShopItemDef[] = [
     name: "高级土壤",
     emoji: "🪴",
     price: 500,
-    description: "铺在槽里，土质更讲究一档。",
-    kind: "permanent",
+    description: "袋装优质种植土。",
+    kind: "consumable",
   },
   {
     id: ITEM_SUPER_SOIL,
     name: "超级土壤",
     emoji: "🌱",
     price: 700,
-    description: "顶配土质，偶尔还有额外惊喜。",
-    kind: "permanent",
+    description: "袋装特级种植土，还会有额外小惊喜。",
+    kind: "consumable",
   },
   {
     id: ITEM_WATER_REFILL,
     name: "蓄水",
     emoji: "🫙",
     price: 10,
-    description: "把浇水壶灌满，又能开一轮。",
+    description: "别忘了补水。",
     kind: "consumable",
   },
 ];
@@ -137,7 +142,7 @@ export function getCombinedGlobalGrowthMult(
 
 /** 模拟太阳：开启时返回提示文案 */
 export function formatSunBoostStatus(sunBoostActive: boolean): string {
-  return sunBoostActive ? "模拟太阳：开启中（全局生长加速）" : "";
+  return sunBoostActive ? "模拟太阳 · 开启中" : "";
 }
 
 export function formatWateringRemainShort(wateringBoostUntil: number | null, now = Date.now()): string {

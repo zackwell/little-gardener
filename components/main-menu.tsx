@@ -1,7 +1,7 @@
 import { BookOpen, Flower2, Play, Settings, Volume2, VolumeX } from "lucide-react";
-import buttonBgUrl from "../pics/button.png";
-import logoUrl from "../pics/logo.png";
-import mainMenuBgUrl from "../pics/main-menu.png";
+import buttonBgUrl from "../pics/button.png?format=webp&quality=82";
+import logoUrl from "../pics/logo.png?format=webp&quality=82";
+import mainMenuBgUrl from "../pics/main-menu.png?format=webp&quality=80";
 
 interface MainMenuProps {
   onStartGame: () => void;

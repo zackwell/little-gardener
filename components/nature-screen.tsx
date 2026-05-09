@@ -1,5 +1,6 @@
-import { Home, Coins, ShoppingBag, Sprout, Flower2, Lock, Store, Image, X, Trash2 } from "lucide-react";
+import { Home, Coins, ShoppingBag, Sprout, Flower2, Lock, Store, Image, X, Trash2, Minus, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { HarvestRewardPayload } from "../game-types";
 import type { GrowingPlantSlot, PersistentSlotSoil } from "../game-progress-storage";
 import {
   FERTILIZER_MAX_USES_PER_PLANT,
@@ -26,8 +27,12 @@ import {
 } from "../collectible-catalog";
 import { type GrowthComputeOpts, computePlantProgress, formatPlantRemainClock } from "../plant-growth";
 import { setMusicScene } from "../game-audio";
-import { SEEDS as seeds, shovelRefundForSeed } from "../seed-catalog";
+import { SEEDS as seeds, shovelRefundForSeed, type SeedCatalogEntry } from "../seed-catalog";
 import { getPlantGrowthVisual, getSeedInventoryIcon } from "../seed-visuals";
+
+function clampInt(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
 
 interface NurtureScreenProps {
   coins: number;
@@ -46,27 +51,27 @@ interface NurtureScreenProps {
   ownsGardenGloves: boolean;
   ownsSimulatedSun: boolean;
   ownsAutoWatering: boolean;
-  ownsAdvancedSoil: boolean;
-  ownsSuperSoil: boolean;
   persistentSlotSoil: PersistentSlotSoil;
-  pendingGloveDoubleNextHarvest: boolean;
   growthOpts: GrowthComputeOpts;
+  harvestRewards: HarvestRewardPayload | null;
+  onCloseHarvestRewards: () => void;
+  shopNotice: string | null;
+  onDismissShopNotice: () => void;
   onBackToMenu: () => void;
-  onBuySeed: (seedId: string, price: number) => void;
-  onBuyItem: (itemId: string) => void;
+  onBuySeed: (seedId: string, unitPrice: number, quantity: number) => void;
+  onBuyItem: (itemId: string, quantity: number) => void;
   onUnlockSlot: (price: number) => void;
   onPlantSeed: (slotIndex: number, seedId: string) => void;
   onHarvestPlant: (slotIndex: number) => void;
   onMoveToExhibition: (slotIndex: number) => void;
-  onSellFruit: (fruitId: string) => void;
-  onSellCollectible: (defId: string) => void;
+  onSellFruit: (fruitId: string, quantity: number) => void;
+  onSellCollectible: (defId: string, quantity: number) => void;
   onMoveCollectibleToExhibition: (defId: string) => void;
   onRemoveCollectibleFromExhibition: (displayIndex: number) => void;
   onMoveFruitToExhibition: (fruitId: string) => void;
   onRemoveFruitFromExhibition: (fruitId: string) => void;
   /** 铲除生长中的植株，返还半价金币 */
   onShovelPlant: (slotIndex: number) => void;
-  onUseGardenGloves: () => void;
   onToggleSun: () => void;
   onActivateWatering: () => void;
   onUseWaterRefill: () => void;
@@ -75,8 +80,215 @@ interface NurtureScreenProps {
   onApplyThermostat: (slotIndex: number) => void;
 }
 
-// 槽位解锁价格
-const slotUnlockPrices = [0, 100, 200, 300]; // 第1个免费，第2、3、4个需要金币
+// 槽位解锁价格：槽位2 / 3 / 4
+const slotUnlockPrices = [0, 300, 1000, 3000];
+
+function FruitMarketCard({
+  seed,
+  count,
+  unit,
+  licensed,
+  canShowFruit,
+  fruitOnDisplayFull,
+  onSellFruit,
+  onMoveFruitToExhibition,
+}: {
+  seed: SeedCatalogEntry;
+  count: number;
+  unit: number;
+  licensed: boolean;
+  canShowFruit: boolean;
+  fruitOnDisplayFull: boolean;
+  onSellFruit: (fruitId: string, quantity: number) => void;
+  onMoveFruitToExhibition: (fruitId: string) => void;
+}) {
+  const [qty, setQty] = useState(1);
+  useEffect(() => {
+    if (count <= 0) {
+      setQty(1);
+      return;
+    }
+    setQty((q) => clampInt(q, 1, count));
+  }, [count]);
+
+  const sellN = count > 0 ? clampInt(qty, 1, count) : 1;
+  const totalEarn = unit * sellN;
+
+  return (
+    <div
+      className={`rounded-2xl p-5 border-2 ${
+        count > 0
+          ? "bg-gradient-to-br from-blue-50 to-cyan-50 border-blue-200"
+          : "bg-gray-100 border-gray-200 opacity-50"
+      }`}
+    >
+      <div className="text-6xl mb-3 text-center">{seed.emoji}</div>
+      <div className="text-base font-medium mb-1 text-blue-800 text-center">{seed.name.replace("种子", "果实")}</div>
+      <div className="text-sm text-blue-600 mb-3 text-center">
+        库存: {count} 个
+      </div>
+      {licensed && count > 0 ? (
+        <p className="mb-2 text-center text-xs text-amber-700">涨价许可生效 · 单价已上浮</p>
+      ) : null}
+      {count > 0 ? (
+        <div className="mb-3 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            aria-label="减少卖出数量"
+            className="rounded-lg border border-blue-200 bg-white p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+            disabled={sellN <= 1}
+            onClick={() => setQty((q) => Math.max(1, q - 1))}
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+          <span className="min-w-[2.5rem] text-center text-sm font-semibold tabular-nums text-blue-900">{sellN}</span>
+          <button
+            type="button"
+            aria-label="增加卖出数量"
+            className="rounded-lg border border-blue-200 bg-white p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+            disabled={sellN >= count}
+            onClick={() => setQty((q) => Math.min(count, q + 1))}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => count > 0 && onSellFruit(seed.id, sellN)}
+          disabled={count === 0}
+          className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 ${
+            count > 0
+              ? "bg-green-500 hover:bg-green-600 text-white"
+              : "bg-gray-300 text-gray-500 cursor-not-allowed"
+          }`}
+        >
+          <Coins className="w-4 h-4" />
+          卖出 {sellN} 个 (+{totalEarn})
+        </button>
+        <button
+          type="button"
+          onClick={() => canShowFruit && onMoveFruitToExhibition(seed.id)}
+          disabled={!canShowFruit}
+          className={`w-full rounded-lg py-2 text-center text-sm font-medium ${
+            canShowFruit
+              ? "bg-purple-500 text-white hover:bg-purple-600"
+              : "cursor-not-allowed bg-gray-200 text-gray-500"
+          }`}
+        >
+          {fruitOnDisplayFull ? "展台已满" : "送 1 个去果实展台"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CollectibleSellRow({
+  defId,
+  def,
+  qtyOwned,
+  sell,
+  canShow,
+  onSellCollectible,
+  onMoveCollectibleToExhibition,
+  onOpenDetail,
+}: {
+  defId: string;
+  def: NonNullable<ReturnType<typeof getCollectibleDef>>;
+  qtyOwned: number;
+  sell: number;
+  canShow: boolean;
+  onSellCollectible: (defId: string, quantity: number) => void;
+  onMoveCollectibleToExhibition: (defId: string) => void;
+  onOpenDetail: () => void;
+}) {
+  const [sellQty, setSellQty] = useState(1);
+  useEffect(() => {
+    if (qtyOwned <= 0) {
+      setSellQty(1);
+      return;
+    }
+    setSellQty((q) => clampInt(q, 1, qtyOwned));
+  }, [qtyOwned]);
+
+  const n = qtyOwned > 0 ? clampInt(sellQty, 1, qtyOwned) : 1;
+  const totalEarn = sell * n;
+
+  return (
+    <div className="flex gap-2 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm sm:gap-3">
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex min-w-0 flex-1 cursor-pointer gap-3 rounded-xl p-0.5 outline-offset-2 hover:bg-violet-50/60"
+        onClick={onOpenDetail}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenDetail();
+          }
+        }}
+      >
+        <img
+          src={def.image}
+          alt=""
+          className="h-20 w-20 shrink-0 rounded-xl border border-violet-100 bg-violet-50 object-contain"
+          draggable={false}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-violet-900">{def.name}</div>
+          <div className="mt-0.5 text-xs text-violet-600">
+            {qualityLabel(def.quality)} · ×{qtyOwned}
+          </div>
+          <p className="mt-1 line-clamp-2 text-[11px] text-gray-600">{def.description}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-col justify-center gap-2">
+        {qtyOwned > 0 ? (
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              aria-label="减少卖出数量"
+              className="rounded-lg border border-violet-200 bg-violet-50 p-1 text-violet-800 hover:bg-violet-100 disabled:opacity-40"
+              disabled={n <= 1}
+              onClick={() => setSellQty((q) => Math.max(1, q - 1))}
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <span className="min-w-[1.75rem] text-center text-xs font-semibold tabular-nums text-violet-900">{n}</span>
+            <button
+              type="button"
+              aria-label="增加卖出数量"
+              className="rounded-lg border border-violet-200 bg-violet-50 p-1 text-violet-800 hover:bg-violet-100 disabled:opacity-40"
+              disabled={n >= qtyOwned}
+              onClick={() => setSellQty((q) => Math.min(qtyOwned, q + 1))}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          disabled={!canShow}
+          onClick={() => canShow && onMoveCollectibleToExhibition(defId)}
+          className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white ${
+            canShow ? "bg-purple-500 hover:bg-purple-600" : "cursor-not-allowed bg-gray-300"
+          }`}
+        >
+          上架展台
+        </button>
+        <button
+          type="button"
+          disabled={qtyOwned === 0}
+          onClick={() => qtyOwned > 0 && onSellCollectible(defId, n)}
+          className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:bg-gray-300"
+        >
+          卖出 {n} 个 +{totalEarn}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function NurtureScreen({
   coins,
@@ -95,11 +307,12 @@ export function NurtureScreen({
   ownsGardenGloves,
   ownsSimulatedSun,
   ownsAutoWatering,
-  ownsAdvancedSoil,
-  ownsSuperSoil,
   persistentSlotSoil,
-  pendingGloveDoubleNextHarvest,
   growthOpts,
+  harvestRewards,
+  onCloseHarvestRewards,
+  shopNotice,
+  onDismissShopNotice,
   onBackToMenu,
   onBuySeed,
   onBuyItem,
@@ -114,7 +327,6 @@ export function NurtureScreen({
   onMoveFruitToExhibition,
   onRemoveFruitFromExhibition,
   onShovelPlant,
-  onUseGardenGloves,
   onToggleSun,
   onActivateWatering,
   onUseWaterRefill,
@@ -122,10 +334,10 @@ export function NurtureScreen({
   onApplyFertilizer,
   onApplyThermostat,
 }: NurtureScreenProps) {
-  /** 每秒刷新剩余时间与浇水倒计时（加速时光标走动更快） */
+  /** 刷新剩余时间与进度条（加速时更顺滑） */
   const [, setClockTick] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setClockTick((n) => n + 1), 1000);
+    const id = window.setInterval(() => setClockTick((n) => n + 1), 250);
     return () => window.clearInterval(id);
   }, []);
 
@@ -139,6 +351,8 @@ export function NurtureScreen({
   const [slotPickMode, setSlotPickMode] = useState<null | "advanced_soil" | "super_soil" | "fertilizer" | "thermostat">(
     null,
   );
+  const [seedBuyQty, setSeedBuyQty] = useState(1);
+  const [itemBuyQty, setItemBuyQty] = useState(1);
 
   const getSeedInfo = (seedId: string) => {
     return seeds.find((s) => s.id === seedId);
@@ -165,6 +379,14 @@ export function NurtureScreen({
   const shopDetailItem = shopItemDetailId ? getShopItem(shopItemDetailId) : undefined;
   const collectibleDetailDef = collectibleDetailId ? getCollectibleDef(collectibleDetailId) : undefined;
 
+  useEffect(() => {
+    setSeedBuyQty(1);
+  }, [shopSeedDetailId]);
+
+  useEffect(() => {
+    setItemBuyQty(1);
+  }, [shopItemDetailId]);
+
   const handlePlantClick = (slotIndex: number, seedId: string) => {
     onPlantSeed(slotIndex, seedId);
     setSelectedSlot(null);
@@ -177,7 +399,18 @@ export function NurtureScreen({
   const fruitOnDisplayTotal = Object.values(exhibitionFruits).reduce((a, n) => a + n, 0);
 
   return (
-    <div className="panel-90 flex min-h-0 w-full max-w-4xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
+    <div className="panel-90 relative flex min-h-0 w-full max-w-4xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
+      {shopNotice ? (
+        <div className="pointer-events-none fixed left-1/2 top-4 z-[80] flex max-w-[min(100%,20rem)] -translate-x-1/2 justify-center px-3">
+          <button
+            type="button"
+            className="pointer-events-auto w-full rounded-2xl bg-emerald-700 px-4 py-2.5 text-center text-sm font-medium text-white shadow-lg ring-2 ring-white/25"
+            onClick={onDismissShopNotice}
+          >
+            {shopNotice}
+          </button>
+        </div>
+      ) : null}
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-6">
         <button
@@ -474,10 +707,7 @@ export function NurtureScreen({
                   {sunStatus ? <span className="text-sm font-medium text-amber-800">{sunStatus}</span> : null}
                   {waterHint ? <span className="text-sm font-medium text-cyan-800">{waterHint}</span> : null}
                   {ownsAutoWatering && wateringNeedsRefill && !waterHint ? (
-                    <span className="text-sm font-medium text-orange-700">浇水器：需蓄水后可再次启动</span>
-                  ) : null}
-                  {pendingGloveDoubleNextHarvest ? (
-                    <span className="text-sm font-medium text-emerald-700">手套：下次收获果实数量翻倍</span>
+                    <span className="text-sm font-medium text-orange-700">请先蓄水</span>
                   ) : null}
                 </div>
               </div>
@@ -485,12 +715,12 @@ export function NurtureScreen({
                 <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   <span>
                     {slotPickMode === "thermostat"
-                      ? "请点击一株生长中的作物使用控温器（同时仅一株生效）"
+                      ? "请点击一株作物使用控温器"
                       : slotPickMode === "fertilizer"
-                        ? "请点击一株生长中的作物施肥（同一株最多 3 次）"
+                        ? "请点击一株作物施肥"
                       : slotPickMode === "advanced_soil"
-                        ? "请点击槽位铺设高级土壤（空槽也可）"
-                        : "请点击槽位铺设超级土壤（空槽也可）"}
+                        ? "请点击槽位铺设高级土壤"
+                        : "请点击槽位铺设超级土壤"}
                   </span>
                   <button
                     type="button"
@@ -515,19 +745,14 @@ export function NurtureScreen({
                         <div className="mt-1 text-sm font-semibold leading-tight text-blue-900">{item.name}</div>
                         <div className="mt-2 text-[11px] text-gray-600">{ownsGardenGloves ? "已拥有" : `${item.price} 金币`}</div>
                         {ownsGardenGloves ? (
-                          <button
-                            type="button"
-                            disabled={!!slotPickMode}
-                            onClick={onUseGardenGloves}
-                            className="mt-2 w-full rounded-lg bg-green-500 py-1.5 text-xs font-semibold text-white hover:bg-green-600 disabled:bg-gray-300"
-                          >
-                            {pendingGloveDoubleNextHarvest ? "已预备翻倍" : "预备翻倍"}
-                          </button>
+                          <div className="mt-2 rounded-lg bg-emerald-100 py-1.5 text-xs font-medium text-emerald-900">
+                            已配备
+                          </div>
                         ) : (
                           <button
                             type="button"
                             disabled={coins < item.price || !!slotPickMode}
-                            onClick={() => onBuyItem(item.id)}
+                            onClick={() => onBuyItem(item.id, 1)}
                             className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
                           >
                             购买
@@ -561,7 +786,7 @@ export function NurtureScreen({
                           <button
                             type="button"
                             disabled={coins < item.price || !!slotPickMode}
-                            onClick={() => onBuyItem(item.id)}
+                            onClick={() => onBuyItem(item.id, 1)}
                             className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
                           >
                             购买
@@ -592,7 +817,7 @@ export function NurtureScreen({
                           <button
                             type="button"
                             disabled={coins < item.price || !!slotPickMode}
-                            onClick={() => onBuyItem(item.id)}
+                            onClick={() => onBuyItem(item.id, 1)}
                             className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
                           >
                             购买
@@ -641,7 +866,7 @@ export function NurtureScreen({
                         <button
                           type="button"
                           disabled={coins < item.price || !!slotPickMode}
-                          onClick={() => onBuyItem(item.id)}
+                          onClick={() => onBuyItem(item.id, 1)}
                           className="mt-1.5 w-full rounded-lg border border-yellow-400 bg-yellow-50 py-1 text-[11px] font-medium text-yellow-900 hover:bg-yellow-100 disabled:opacity-50"
                         >
                           +购买 {item.price}金
@@ -671,7 +896,7 @@ export function NurtureScreen({
                         <button
                           type="button"
                           disabled={coins < item.price || !!slotPickMode}
-                          onClick={() => onBuyItem(item.id)}
+                          onClick={() => onBuyItem(item.id, 1)}
                           className="mt-1.5 w-full rounded-lg border border-yellow-400 bg-yellow-50 py-1 text-[11px] font-medium text-yellow-900 hover:bg-yellow-100 disabled:opacity-50"
                         >
                           +购买 {item.price}金
@@ -681,7 +906,7 @@ export function NurtureScreen({
                   }
 
                   if (item.id === ITEM_ADVANCED_SOIL) {
-                    const canPick = ownsAdvancedSoil && !slotPickMode;
+                    const canPick = count > 0 && !slotPickMode;
                     return (
                       <div
                         key={item.id}
@@ -689,32 +914,29 @@ export function NurtureScreen({
                       >
                         <div className="text-2xl">{item.emoji}</div>
                         <div className="mt-1 text-sm font-semibold leading-tight text-blue-900">{item.name}</div>
-                        <div className="mt-2 text-[11px] text-gray-600">{ownsAdvancedSoil ? "已拥有" : `${item.price} 金币`}</div>
-                        {ownsAdvancedSoil ? (
-                          <button
-                            type="button"
-                            disabled={!canPick}
-                            onClick={() => setSlotPickMode("advanced_soil")}
-                            className="mt-2 w-full rounded-lg bg-amber-600 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:bg-gray-300"
-                          >
-                            铺土
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={coins < item.price || !!slotPickMode}
-                            onClick={() => onBuyItem(item.id)}
-                            className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
-                          >
-                            购买
-                          </button>
-                        )}
+                        <div className="mt-2 text-[11px] text-gray-700">库存 {count}</div>
+                        <button
+                          type="button"
+                          disabled={!canPick}
+                          onClick={() => setSlotPickMode("advanced_soil")}
+                          className="mt-2 w-full rounded-lg bg-amber-600 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:bg-gray-300"
+                        >
+                          铺土
+                        </button>
+                        <button
+                          type="button"
+                          disabled={coins < item.price || !!slotPickMode}
+                          onClick={() => onBuyItem(item.id, 1)}
+                          className="mt-1.5 w-full rounded-lg border border-yellow-400 bg-yellow-50 py-1 text-[11px] font-medium text-yellow-900 hover:bg-yellow-100 disabled:opacity-50"
+                        >
+                          +购买 {item.price}金
+                        </button>
                       </div>
                     );
                   }
 
                   if (item.id === ITEM_SUPER_SOIL) {
-                    const canPick = ownsSuperSoil && !slotPickMode;
+                    const canPick = count > 0 && !slotPickMode;
                     return (
                       <div
                         key={item.id}
@@ -722,26 +944,23 @@ export function NurtureScreen({
                       >
                         <div className="text-2xl">{item.emoji}</div>
                         <div className="mt-1 text-sm font-semibold leading-tight text-blue-900">{item.name}</div>
-                        <div className="mt-2 text-[11px] text-gray-600">{ownsSuperSoil ? "已拥有" : `${item.price} 金币`}</div>
-                        {ownsSuperSoil ? (
-                          <button
-                            type="button"
-                            disabled={!canPick}
-                            onClick={() => setSlotPickMode("super_soil")}
-                            className="mt-2 w-full rounded-lg bg-orange-600 py-1.5 text-xs font-semibold text-white hover:bg-orange-700 disabled:bg-gray-300"
-                          >
-                            铺土
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={coins < item.price || !!slotPickMode}
-                            onClick={() => onBuyItem(item.id)}
-                            className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
-                          >
-                            购买
-                          </button>
-                        )}
+                        <div className="mt-2 text-[11px] text-gray-700">库存 {count}</div>
+                        <button
+                          type="button"
+                          disabled={!canPick}
+                          onClick={() => setSlotPickMode("super_soil")}
+                          className="mt-2 w-full rounded-lg bg-orange-600 py-1.5 text-xs font-semibold text-white hover:bg-orange-700 disabled:bg-gray-300"
+                        >
+                          铺土
+                        </button>
+                        <button
+                          type="button"
+                          disabled={coins < item.price || !!slotPickMode}
+                          onClick={() => onBuyItem(item.id, 1)}
+                          className="mt-1.5 w-full rounded-lg border border-yellow-400 bg-yellow-50 py-1 text-[11px] font-medium text-yellow-900 hover:bg-yellow-100 disabled:opacity-50"
+                        >
+                          +购买 {item.price}金
+                        </button>
                       </div>
                     );
                   }
@@ -758,7 +977,7 @@ export function NurtureScreen({
                         <button
                           type="button"
                           disabled={coins < item.price || !!slotPickMode}
-                          onClick={() => onBuyItem(item.id)}
+                          onClick={() => onBuyItem(item.id, 1)}
                           className="mt-2 w-full rounded-lg bg-yellow-500 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:bg-gray-300"
                         >
                           购买 {item.price}金
@@ -827,9 +1046,7 @@ export function NurtureScreen({
                   const permOwned =
                     (item.id === ITEM_GARDEN_GLOVES && ownsGardenGloves) ||
                     (item.id === ITEM_SIMULATED_SUN && ownsSimulatedSun) ||
-                    (item.id === ITEM_AUTO_WATERING && ownsAutoWatering) ||
-                    (item.id === ITEM_ADVANCED_SOIL && ownsAdvancedSoil) ||
-                    (item.id === ITEM_SUPER_SOIL && ownsSuperSoil);
+                    (item.id === ITEM_AUTO_WATERING && ownsAutoWatering);
 
                   return (
                     <button
@@ -957,56 +1174,17 @@ export function NurtureScreen({
                       const sell = sellPriceForCollectibleDefId(defId);
                       const canShow = exhibitionCollectibles.length < MAX_EXHIBITION_COLLECTIBLES;
                       return [
-                        <div
+                        <CollectibleSellRow
                           key={defId}
-                          className="flex gap-2 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm sm:gap-3"
-                        >
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            className="flex min-w-0 flex-1 cursor-pointer gap-3 rounded-xl p-0.5 outline-offset-2 hover:bg-violet-50/60"
-                            onClick={() => setCollectibleDetailId(defId)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                setCollectibleDetailId(defId);
-                              }
-                            }}
-                          >
-                            <img
-                              src={def.image}
-                              alt=""
-                              className="h-20 w-20 shrink-0 rounded-xl border border-violet-100 bg-violet-50 object-contain"
-                              draggable={false}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="font-semibold text-violet-900">{def.name}</div>
-                              <div className="mt-0.5 text-xs text-violet-600">
-                                {qualityLabel(def.quality)} · ×{qty}
-                              </div>
-                              <p className="mt-1 line-clamp-2 text-[11px] text-gray-600">{def.description}</p>
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 flex-col justify-center gap-2">
-                            <button
-                              type="button"
-                              disabled={!canShow}
-                              onClick={() => canShow && onMoveCollectibleToExhibition(defId)}
-                              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white ${
-                                canShow ? "bg-purple-500 hover:bg-purple-600" : "cursor-not-allowed bg-gray-300"
-                              }`}
-                            >
-                              上架展台
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onSellCollectible(defId)}
-                              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600"
-                            >
-                              卖出 +{sell}
-                            </button>
-                          </div>
-                        </div>,
+                          defId={defId}
+                          def={def}
+                          qtyOwned={qty}
+                          sell={sell}
+                          canShow={canShow}
+                          onSellCollectible={onSellCollectible}
+                          onMoveCollectibleToExhibition={onMoveCollectibleToExhibition}
+                          onOpenDetail={() => setCollectibleDetailId(defId)}
+                        />,
                       ];
                     })
                 )}
@@ -1076,7 +1254,7 @@ export function NurtureScreen({
               果实市场
             </h3>
             <p className="mb-4 text-sm text-blue-700/90">
-              收获的果实暂存在此：可<strong className="mx-0.5">单个售出</strong>，或将<strong className="mx-0.5">1 个</strong>送至「展览区 · 果实展台」陈列（其余仍留在市场出售）。
+              收获的果实暂存在此：可选择<strong className="mx-0.5">数量批量售出</strong>，或将<strong className="mx-0.5">1 个</strong>送至「展览区 · 果实展台」陈列。
             </p>
             <div className="grid grid-cols-3 gap-4">
               {seeds.map((seed) => {
@@ -1087,52 +1265,17 @@ export function NurtureScreen({
                   count > 0 && fruitOnDisplayTotal < MAX_EXHIBITION_FRUIT_UNITS;
 
                 return (
-                  <div
+                  <FruitMarketCard
                     key={seed.id}
-                    className={`rounded-2xl p-5 border-2 ${
-                      count > 0
-                        ? "bg-gradient-to-br from-blue-50 to-cyan-50 border-blue-200"
-                        : "bg-gray-100 border-gray-200 opacity-50"
-                    }`}
-                  >
-                    <div className="text-6xl mb-3 text-center">{seed.emoji}</div>
-                    <div className="text-base font-medium mb-1 text-blue-800 text-center">{seed.name.replace('种子', '果实')}</div>
-                    <div className="text-sm text-blue-600 mb-3 text-center">
-                      库存: {count} 个
-                    </div>
-                    {licensed && count > 0 ? (
-                      <p className="mb-2 text-center text-xs text-amber-700">涨价许可生效 · 单价已上浮</p>
-                    ) : null}
-                    <div className="flex flex-col gap-2">
-                      <button
-                        type="button"
-                        onClick={() => count > 0 && onSellFruit(seed.id)}
-                        disabled={count === 0}
-                        className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 ${
-                          count > 0
-                            ? "bg-green-500 hover:bg-green-600 text-white"
-                            : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                        }`}
-                      >
-                        <Coins className="w-4 h-4" />
-                        卖出 1 个 (+{unit})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => canShowFruit && onMoveFruitToExhibition(seed.id)}
-                        disabled={!canShowFruit}
-                        className={`w-full rounded-lg py-2 text-center text-sm font-medium ${
-                          canShowFruit
-                            ? "bg-purple-500 text-white hover:bg-purple-600"
-                            : "cursor-not-allowed bg-gray-200 text-gray-500"
-                        }`}
-                      >
-                        {fruitOnDisplayTotal >= MAX_EXHIBITION_FRUIT_UNITS
-                          ? "展台已满"
-                          : "送 1 个去果实展台"}
-                      </button>
-                    </div>
-                  </div>
+                    seed={seed}
+                    count={count}
+                    unit={unit}
+                    licensed={licensed}
+                    canShowFruit={canShowFruit}
+                    fruitOnDisplayFull={fruitOnDisplayTotal >= MAX_EXHIBITION_FRUIT_UNITS}
+                    onSellFruit={onSellFruit}
+                    onMoveFruitToExhibition={onMoveFruitToExhibition}
+                  />
                 );
               })}
             </div>
@@ -1147,6 +1290,54 @@ export function NurtureScreen({
           </div>
         )}
       </div>
+
+      {/* 收获结算 */}
+      {harvestRewards ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="harvest-reward-title"
+          onClick={onCloseHarvestRewards}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="harvest-reward-title" className="text-xl font-bold text-green-800">
+              收获成功
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">本次获得：</p>
+            <ul className="mt-3 max-h-[min(50vh,22rem)] space-y-2 overflow-y-auto text-sm">
+              {harvestRewards.fruits.map((f) => (
+                <li
+                  key={f.id}
+                  className="flex items-center justify-between gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-green-900"
+                >
+                  <span>{f.name}</span>
+                  <span className="shrink-0 font-semibold tabular-nums">×{f.count}</span>
+                </li>
+              ))}
+              {harvestRewards.collectibles.map((c) => (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-2 rounded-xl bg-violet-50 px-3 py-2.5 text-violet-900"
+                >
+                  <span>藏品 · {c.name}</span>
+                  <span className="shrink-0 font-semibold tabular-nums">×{c.count}</span>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="mt-6 w-full rounded-xl bg-green-600 py-3 text-base font-semibold text-white hover:bg-green-700"
+              onClick={onCloseHarvestRewards}
+            >
+              好的
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* 种植背包：仅展示库存 > 0 的种子 */}
       {selectedSlot !== null && (
@@ -1271,21 +1462,61 @@ export function NurtureScreen({
                   {shopDetailSeed.flavor}
                 </p>
               ) : null}
-              <button
-                type="button"
-                disabled={coins < shopDetailSeed.price}
-                onClick={() => {
-                  if (coins >= shopDetailSeed.price) {
-                    onBuySeed(shopDetailSeed.id, shopDetailSeed.price);
-                  }
-                }}
-                className={`mt-6 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white ${
-                  coins >= shopDetailSeed.price ? "bg-yellow-500 hover:bg-yellow-600" : "cursor-not-allowed bg-gray-300 text-gray-500"
-                }`}
-              >
-                <Coins className="h-5 w-5" />
-                {coins >= shopDetailSeed.price ? `购买 · ${shopDetailSeed.price} 金币` : "金币不足"}
-              </button>
+              {(() => {
+                const unit = shopDetailSeed.price;
+                const maxQty = Math.min(99, Math.max(0, Math.floor(coins / unit)));
+                const q = maxQty < 1 ? 1 : clampInt(seedBuyQty, 1, maxQty);
+                const total = unit * q;
+                const canBuy = maxQty >= 1 && coins >= total;
+                return (
+                  <>
+                    <div className="mt-6 flex flex-col gap-3 rounded-xl bg-orange-50/90 px-3 py-3 ring-1 ring-orange-100">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-orange-900">
+                        <span>购买数量</span>
+                        <span className="tabular-nums">
+                          单价 {unit} · 合计 <strong>{total}</strong> 金币
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-orange-200 bg-white p-2 text-orange-800 hover:bg-orange-100 disabled:opacity-40"
+                          disabled={q <= 1 || maxQty < 1}
+                          onClick={() => setSeedBuyQty((n) => Math.max(1, n - 1))}
+                          aria-label="减少数量"
+                        >
+                          <Minus className="h-5 w-5" />
+                        </button>
+                        <span className="min-w-[3rem] text-center text-lg font-semibold tabular-nums text-orange-950">{q}</span>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-orange-200 bg-white p-2 text-orange-800 hover:bg-orange-100 disabled:opacity-40"
+                          disabled={q >= maxQty || maxQty < 1}
+                          onClick={() => setSeedBuyQty((n) => Math.min(maxQty, n + 1))}
+                          aria-label="增加数量"
+                        >
+                          <Plus className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canBuy}
+                      onClick={() => {
+                        if (!canBuy) return;
+                        onBuySeed(shopDetailSeed.id, unit, q);
+                        setShopSeedDetailId(null);
+                      }}
+                      className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white ${
+                        canBuy ? "bg-yellow-500 hover:bg-yellow-600" : "cursor-not-allowed bg-gray-300 text-gray-500"
+                      }`}
+                    >
+                      <Coins className="h-5 w-5" />
+                      {canBuy ? `购买 · 共 ${total} 金币` : "金币不足"}
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1329,9 +1560,7 @@ export function NurtureScreen({
                   <span className="rounded-full bg-gray-100 px-3 py-1">
                     {(shopDetailItem.id === ITEM_GARDEN_GLOVES && ownsGardenGloves) ||
                     (shopDetailItem.id === ITEM_SIMULATED_SUN && ownsSimulatedSun) ||
-                    (shopDetailItem.id === ITEM_AUTO_WATERING && ownsAutoWatering) ||
-                    (shopDetailItem.id === ITEM_ADVANCED_SOIL && ownsAdvancedSoil) ||
-                    (shopDetailItem.id === ITEM_SUPER_SOIL && ownsSuperSoil)
+                    (shopDetailItem.id === ITEM_AUTO_WATERING && ownsAutoWatering)
                       ? "已拥有"
                       : "未拥有"}
                   </span>
@@ -1346,31 +1575,84 @@ export function NurtureScreen({
                 const permOwned =
                   (shopDetailItem.id === ITEM_GARDEN_GLOVES && ownsGardenGloves) ||
                   (shopDetailItem.id === ITEM_SIMULATED_SUN && ownsSimulatedSun) ||
-                  (shopDetailItem.id === ITEM_AUTO_WATERING && ownsAutoWatering) ||
-                  (shopDetailItem.id === ITEM_ADVANCED_SOIL && ownsAdvancedSoil) ||
-                  (shopDetailItem.id === ITEM_SUPER_SOIL && ownsSuperSoil);
-                const afford = coins >= shopDetailItem.price;
-                const buyPermanentDisabled = shopDetailItem.kind === "permanent" && permOwned;
-                const buyDisabled = buyPermanentDisabled || !afford;
+                  (shopDetailItem.id === ITEM_AUTO_WATERING && ownsAutoWatering);
+                const unit = shopDetailItem.price;
+
+                if (shopDetailItem.kind === "permanent") {
+                  const afford = coins >= unit;
+                  const buyPermanentDisabled = permOwned;
+                  const buyDisabled = buyPermanentDisabled || !afford;
+                  return (
+                    <button
+                      type="button"
+                      disabled={buyDisabled}
+                      onClick={() => {
+                        if (buyDisabled) return;
+                        onBuyItem(shopDetailItem.id, 1);
+                        setShopItemDetailId(null);
+                      }}
+                      className={`mt-6 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white ${
+                        !buyDisabled ? "bg-yellow-500 hover:bg-yellow-600" : "cursor-not-allowed bg-gray-300 text-gray-500"
+                      }`}
+                    >
+                      <Coins className="h-5 w-5" />
+                      {buyPermanentDisabled ? "已拥有" : afford ? `购买 · ${unit} 金币` : "金币不足"}
+                    </button>
+                  );
+                }
+
+                const maxQty = Math.min(99, Math.max(0, Math.floor(coins / unit)));
+                const q = maxQty < 1 ? 1 : clampInt(itemBuyQty, 1, maxQty);
+                const total = unit * q;
+                const canBuy = maxQty >= 1 && coins >= total;
+
                 return (
-                  <button
-                    type="button"
-                    disabled={buyDisabled}
-                    onClick={() => {
-                      if (buyDisabled) return;
-                      onBuyItem(shopDetailItem.id);
-                    }}
-                    className={`mt-6 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white ${
-                      !buyDisabled ? "bg-yellow-500 hover:bg-yellow-600" : "cursor-not-allowed bg-gray-300 text-gray-500"
-                    }`}
-                  >
-                    <Coins className="h-5 w-5" />
-                    {buyPermanentDisabled
-                      ? "已拥有"
-                      : afford
-                        ? `购买 · ${shopDetailItem.price} 金币`
-                        : "金币不足"}
-                  </button>
+                  <>
+                    <div className="mt-6 flex flex-col gap-3 rounded-xl bg-emerald-50/90 px-3 py-3 ring-1 ring-emerald-100">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-emerald-900">
+                        <span>购买数量</span>
+                        <span className="tabular-nums">
+                          单价 {unit} · 合计 <strong>{total}</strong> 金币
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-emerald-200 bg-white p-2 text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+                          disabled={q <= 1 || maxQty < 1}
+                          onClick={() => setItemBuyQty((n) => Math.max(1, n - 1))}
+                          aria-label="减少数量"
+                        >
+                          <Minus className="h-5 w-5" />
+                        </button>
+                        <span className="min-w-[3rem] text-center text-lg font-semibold tabular-nums text-emerald-950">{q}</span>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-emerald-200 bg-white p-2 text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+                          disabled={q >= maxQty || maxQty < 1}
+                          onClick={() => setItemBuyQty((n) => Math.min(maxQty, n + 1))}
+                          aria-label="增加数量"
+                        >
+                          <Plus className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canBuy}
+                      onClick={() => {
+                        if (!canBuy) return;
+                        onBuyItem(shopDetailItem.id, q);
+                        setShopItemDetailId(null);
+                      }}
+                      className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white ${
+                        canBuy ? "bg-yellow-500 hover:bg-yellow-600" : "cursor-not-allowed bg-gray-300 text-gray-500"
+                      }`}
+                    >
+                      <Coins className="h-5 w-5" />
+                      {canBuy ? `购买 · 共 ${total} 金币` : "金币不足"}
+                    </button>
+                  </>
                 );
               })()}
             </div>

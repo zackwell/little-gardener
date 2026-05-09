@@ -4,13 +4,13 @@
  */
 
 import type { PersistentSoilTier } from "./item-catalog";
-import tomatoBadgeUrl from "./pics/tomato/番茄徽章.png";
-import tomatoLicenseUrl from "./pics/tomato/番茄涨价许可.png";
-import tomatoEpicUrl from "./pics/tomato/番茄史诗藏品麦当当套餐.png";
-import strawberryBadgeUrl from "./pics/strawberry/藏品普通徽章.png";
-import strawberryLicenseUrl from "./pics/strawberry/藏品稀有涨价许可.png";
-import strawberryEpicUrl from "./pics/strawberry/藏品史诗.png";
-import strawberryLegendaryUrl from "./pics/strawberry/藏品传说.png";
+import tomatoBadgeUrl from "./pics/tomato/番茄徽章.png?format=webp&quality=85";
+import tomatoLicenseUrl from "./pics/tomato/番茄涨价许可.png?format=webp&quality=85";
+import tomatoEpicUrl from "./pics/tomato/番茄史诗藏品麦当当套餐.png?format=webp&quality=82";
+import strawberryBadgeUrl from "./pics/strawberry/藏品普通徽章.png?format=webp&quality=85";
+import strawberryLicenseUrl from "./pics/strawberry/藏品稀有涨价许可.png?format=webp&quality=85";
+import strawberryEpicUrl from "./pics/strawberry/藏品史诗.png?format=webp&quality=82";
+import strawberryLegendaryUrl from "./pics/strawberry/藏品传说.png?format=webp&quality=82";
 
 export type CollectibleQuality = "normal" | "rare" | "epic" | "legendary";
 

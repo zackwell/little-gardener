@@ -2,10 +2,10 @@
  * 培育界面：部分作物使用自定义贴图（幼苗等）
  */
 
-import tomatoSeedUrl from "./pics/tomato/番茄种子.png";
-import tomatoSproutUrl from "./pics/tomato/番茄芽.png";
-import strawberrySeedUrl from "./pics/strawberry/种子.png";
-import strawberryGrowingUrl from "./pics/strawberry/种植.png";
+import tomatoSeedUrl from "./pics/tomato/番茄种子.png?format=webp&quality=85";
+import tomatoSproutUrl from "./pics/tomato/番茄芽.png?format=webp&quality=85";
+import strawberrySeedUrl from "./pics/strawberry/种子.png?format=webp&quality=85";
+import strawberryGrowingUrl from "./pics/strawberry/种植.png?format=webp&quality=85";
 
 export type PlantGrowthVisual =
   | { type: "emoji"; emoji: string }

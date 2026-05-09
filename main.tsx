@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MainMenu } from "./components/main-menu";
-import { GameScreen } from "./components/game-screen";
 import { VictoryModal } from "./components/victory-modal";
 import { DefeatModal } from "./components/defeat-modal";
-import { RecordsScreen } from "./components/records-screen";
-import { NurtureScreen } from "./components/nature-screen";
-import { SettingsScreen } from "./components/settings-screen";
+
+const GameScreen = lazy(() => import("./components/game-screen").then((m) => ({ default: m.GameScreen })));
+const RecordsScreen = lazy(() => import("./components/records-screen").then((m) => ({ default: m.RecordsScreen })));
+const SettingsScreen = lazy(() => import("./components/settings-screen").then((m) => ({ default: m.SettingsScreen })));
+const NurtureScreen = lazy(() => import("./components/nature-screen").then((m) => ({ default: m.NurtureScreen })));
 import { defeatConsolationGold, goldForSecondsUsed } from "./game-constants";
 import {
   type GrowingPlantSlot,
@@ -15,7 +16,9 @@ import {
 } from "./game-progress-storage";
 import {
   ADVANCED_SOIL_HARVEST_MULT,
+  FERTILIZER_DIRECT_DURATION_RATIO,
   FERTILIZER_MAX_USES_PER_PLANT,
+  GARDEN_GLOVES_HARVEST_MULT,
   ITEM_ADVANCED_SOIL,
   ITEM_AUTO_WATERING,
   ITEM_FERTILIZER,
@@ -30,12 +33,16 @@ import {
   getCombinedGlobalGrowthMult,
   getShopItem,
 } from "./item-catalog";
-import { computePlantProgress } from "./plant-growth";
+import {
+  computePlantProgress,
+  mapFlushAllGrowingPlants,
+  migrateLegacyPlantGrowthFields,
+  getPlantDuration,
+} from "./plant-growth";
 import { addVictoryRecord } from "./records-storage";
 import { playSfxDefeat, playSfxVictory, setMusicScene } from "./game-audio";
-import gameplayBgUrl from "./pics/gameplay.png";
 import { useGameSettings } from "./settings-context";
-import type { DefeatPayload, VictoryPayload } from "./game-types";
+import type { DefeatPayload, HarvestRewardPayload, VictoryPayload } from "./game-types";
 import {
   MAX_EXHIBITION_COLLECTIBLES,
   MAX_EXHIBITION_FRUIT_UNITS,
@@ -45,6 +52,18 @@ import {
   getCollectibleDef,
 } from "./collectible-catalog";
 import { getGrowDurationMs, getSeedEntry, rollBaseHarvestFruitCount, shovelRefundForSeed } from "./seed-catalog";
+
+function LazyScreenFallback() {
+  return (
+    <div className="flex min-h-[min(70vh,520px)] w-full max-w-4xl flex-col items-center justify-center rounded-3xl bg-white/90 p-8 text-emerald-800 shadow-xl">
+      <div
+        className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-200 border-t-emerald-600"
+        aria-hidden
+      />
+      <p className="mt-4 text-sm font-medium">加载中…</p>
+    </div>
+  );
+}
 
 export default function Component() {
   const { settings, roundSeconds, toggleMusic } = useGameSettings();
@@ -69,7 +88,6 @@ export default function Component() {
     initialProgress.growingPlants.map((x) => (x ? { ...x } : null)),
   );
   /** 培育页内驱动生长进度条刷新（真实时间用 Date 计算，此处仅触发重渲染） */
-  const [, setGrowthTick] = useState(0);
   const [seedInventory, setSeedInventory] = useState<{ [key: string]: number }>(() => ({
     ...initialProgress.seedInventory,
   }));
@@ -97,17 +115,53 @@ export default function Component() {
   const [ownsGardenGloves, setOwnsGardenGloves] = useState(() => initialProgress.ownsGardenGloves);
   const [ownsSimulatedSun, setOwnsSimulatedSun] = useState(() => initialProgress.ownsSimulatedSun);
   const [ownsAutoWatering, setOwnsAutoWatering] = useState(() => initialProgress.ownsAutoWatering);
-  const [ownsAdvancedSoil, setOwnsAdvancedSoil] = useState(() => initialProgress.ownsAdvancedSoil);
-  const [ownsSuperSoil, setOwnsSuperSoil] = useState(() => initialProgress.ownsSuperSoil);
   const [persistentSlotSoil, setPersistentSlotSoil] = useState<PersistentSlotSoil>(
     () => [...initialProgress.persistentSlotSoil] as PersistentSlotSoil,
   );
-  const [pendingGloveDoubleNextHarvest, setPendingGloveDoubleNextHarvest] = useState(
-    () => initialProgress.pendingGloveDoubleNextHarvest,
-  );
+  const [harvestRewards, setHarvestRewards] = useState<HarvestRewardPayload | null>(null);
+  const [shopNotice, setShopNotice] = useState<string | null>(null);
+  /** 对局背景大图按需加载，减轻首屏体积 */
+  const [playingBgUrl, setPlayingBgUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!shopNotice) return;
+    const t = window.setTimeout(() => setShopNotice(null), 2800);
+    return () => clearTimeout(t);
+  }, [shopNotice]);
+
+  useEffect(() => {
+    if (gameState !== "playing") {
+      setPlayingBgUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void import("./pics/gameplay.png?format=webp&quality=80").then((mod: { default: string }) => {
+      if (!cancelled) setPlayingBgUrl(mod.default);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameState]);
 
   const globalGrowthMult = getCombinedGlobalGrowthMult(sunBoostActive, wateringBoostUntil);
   const growthOpts = useMemo(() => ({ globalGrowthMult }), [globalGrowthMult]);
+
+  /** 旧存档一次性迁移（挂载时；新株 growthModelVersion===2 会跳过） */
+  useLayoutEffect(() => {
+    const opts = {
+      globalGrowthMult: getCombinedGlobalGrowthMult(sunBoostActive, wateringBoostUntil),
+    };
+    setGrowingPlants((prev) => {
+      let changed = false;
+      const next = prev.map((p) => {
+        if (!p || p.growthModelVersion === 2) return p;
+        changed = true;
+        return migrateLegacyPlantGrowthFields(p, opts);
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅首次挂载迁移，避免日照切换反复 setState
+  }, []);
 
   /** 日照 / 浇水倒计时期间每秒刷新 */
   const [buffTick, setBuffTick] = useState(0);
@@ -119,11 +173,17 @@ export default function Component() {
   }, [wateringBoostUntil]);
 
   useEffect(() => {
-    if (ownsAutoWatering && wateringBoostUntil != null && Date.now() >= wateringBoostUntil) {
-      setWateringNeedsRefill(true);
-      setWateringBoostUntil(null);
-    }
-  }, [buffTick, wateringBoostUntil, ownsAutoWatering]);
+    if (!ownsAutoWatering || wateringBoostUntil == null || Date.now() < wateringBoostUntil) return;
+    const now = Date.now();
+    const wUntil = wateringBoostUntil;
+    const flushAt = Math.min(now, wUntil) - 1;
+    const oldOpts = {
+      globalGrowthMult: getCombinedGlobalGrowthMult(sunBoostActive, wUntil, flushAt),
+    };
+    setGrowingPlants((plants) => mapFlushAllGrowingPlants(plants, oldOpts, now));
+    setWateringNeedsRefill(true);
+    setWateringBoostUntil(null);
+  }, [buffTick, wateringBoostUntil, ownsAutoWatering, sunBoostActive]);
 
   useEffect(() => {
     saveGameProgress({
@@ -143,10 +203,7 @@ export default function Component() {
       ownsGardenGloves,
       ownsSimulatedSun,
       ownsAutoWatering,
-      ownsAdvancedSoil,
-      ownsSuperSoil,
       persistentSlotSoil,
-      pendingGloveDoubleNextHarvest,
     });
   }, [
     coins,
@@ -165,10 +222,7 @@ export default function Component() {
     ownsGardenGloves,
     ownsSimulatedSun,
     ownsAutoWatering,
-    ownsAdvancedSoil,
-    ownsSuperSoil,
     persistentSlotSoil,
-    pendingGloveDoubleNextHarvest,
   ]);
 
   const bumpRound = () => setRoundId((r) => r + 1);
@@ -177,12 +231,6 @@ export default function Component() {
     if (gameState === "playing") setMusicScene("playing");
     else if (gameState === "nurture") setMusicScene("nurture_greenhouse");
     else setMusicScene("menu");
-  }, [gameState]);
-
-  useEffect(() => {
-    if (gameState !== "nurture") return;
-    const id = window.setInterval(() => setGrowthTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
   }, [gameState]);
 
   const handleStartGame = () => {
@@ -259,47 +307,51 @@ export default function Component() {
     bumpRound();
   };
 
-  const handleBuySeed = (seedId: string, price: number) => {
-    if (coins >= price) {
-      setCoins(coins - price);
-      setSeedInventory({
-        ...seedInventory,
-        [seedId]: (seedInventory[seedId] || 0) + 1,
-      });
-    }
+  const handleBuySeed = (seedId: string, unitPrice: number, quantity: number) => {
+    const q = Math.max(1, Math.floor(quantity));
+    const total = unitPrice * q;
+    if (coins < total) return;
+    setCoins((c) => c - total);
+    setSeedInventory((inv) => ({
+      ...inv,
+      [seedId]: (inv[seedId] || 0) + q,
+    }));
+    setShopNotice("已进入背包");
   };
 
-  const handleBuyItem = (itemId: string) => {
+  const handleBuyItem = (itemId: string, quantity: number) => {
+    const q = Math.max(1, Math.floor(quantity));
     const def = getShopItem(itemId);
-    if (!def || coins < def.price) return;
+    if (!def) return;
+    const total = def.price * q;
+    if (coins < total) return;
+
     if (def.kind === "permanent") {
+      if (q !== 1) return;
       if (itemId === ITEM_GARDEN_GLOVES && ownsGardenGloves) return;
       if (itemId === ITEM_SIMULATED_SUN && ownsSimulatedSun) return;
       if (itemId === ITEM_AUTO_WATERING && ownsAutoWatering) return;
-      if (itemId === ITEM_ADVANCED_SOIL && ownsAdvancedSoil) return;
-      if (itemId === ITEM_SUPER_SOIL && ownsSuperSoil) return;
       setCoins((c) => c - def.price);
       if (itemId === ITEM_GARDEN_GLOVES) setOwnsGardenGloves(true);
       if (itemId === ITEM_SIMULATED_SUN) setOwnsSimulatedSun(true);
       if (itemId === ITEM_AUTO_WATERING) setOwnsAutoWatering(true);
-      if (itemId === ITEM_ADVANCED_SOIL) setOwnsAdvancedSoil(true);
-      if (itemId === ITEM_SUPER_SOIL) setOwnsSuperSoil(true);
+      setShopNotice("购买成功");
       return;
     }
-    setCoins((c) => c - def.price);
+
+    setCoins((c) => c - total);
     setItemInventory((inv) => ({
       ...inv,
-      [itemId]: (inv[itemId] || 0) + 1,
+      [itemId]: (inv[itemId] || 0) + q,
     }));
-  };
-
-  const handleUseGardenGloves = () => {
-    if (!ownsGardenGloves) return;
-    setPendingGloveDoubleNextHarvest(true);
+    setShopNotice("已进入背包");
   };
 
   const handleToggleSun = () => {
     if (!ownsSimulatedSun) return;
+    const now = Date.now();
+    const oldOpts = { globalGrowthMult: getCombinedGlobalGrowthMult(sunBoostActive, wateringBoostUntil, now) };
+    setGrowingPlants((plants) => mapFlushAllGrowingPlants(plants, oldOpts, now));
     setSunBoostActive((v) => !v);
   };
 
@@ -307,6 +359,8 @@ export default function Component() {
     if (!ownsAutoWatering || wateringNeedsRefill) return;
     const now = Date.now();
     if (wateringBoostUntil != null && now < wateringBoostUntil) return;
+    const oldOpts = { globalGrowthMult: getCombinedGlobalGrowthMult(sunBoostActive, wateringBoostUntil, now) };
+    setGrowingPlants((plants) => mapFlushAllGrowingPlants(plants, oldOpts, now));
     setWateringBoostUntil(now + WATERING_BOOST_DURATION_MS);
     setWateringNeedsRefill(false);
   };
@@ -324,8 +378,15 @@ export default function Component() {
   };
 
   const handleLayPersistentSoil = (tier: "advanced" | "super", slotIndex: number) => {
-    if (tier === "advanced" && !ownsAdvancedSoil) return;
-    if (tier === "super" && !ownsSuperSoil) return;
+    const itemId = tier === "advanced" ? ITEM_ADVANCED_SOIL : ITEM_SUPER_SOIL;
+    if ((itemInventory[itemId] || 0) < 1) return;
+    setItemInventory((inv) => {
+      const n = (inv[itemId] || 0) - 1;
+      const next = { ...inv };
+      if (n <= 0) delete next[itemId];
+      else next[itemId] = n;
+      return next;
+    });
     setPersistentSlotSoil((prev) => {
       const next = [...prev] as PersistentSlotSoil;
       next[slotIndex] = tier;
@@ -341,6 +402,8 @@ export default function Component() {
     const prevUses = plant.fertilizerUses ?? 0;
     if (prevUses >= FERTILIZER_MAX_USES_PER_PLANT) return;
 
+    const now = Date.now();
+
     setItemInventory((inv) => {
       const n = (inv[ITEM_FERTILIZER] || 0) - 1;
       const next = { ...inv };
@@ -350,13 +413,26 @@ export default function Component() {
     });
 
     setGrowingPlants((plants) => {
-      const copy = [...plants];
-      const p = copy[slotIndex];
-      if (p) {
-        const { fertilizerMult: _old, ...rest } = p;
-        copy[slotIndex] = { ...rest, fertilizerUses: prevUses + 1 };
-      }
-      return copy;
+      const flushed = mapFlushAllGrowingPlants(plants, growthOpts, now);
+      const p = flushed[slotIndex];
+      if (!p) return flushed;
+      const duration = getPlantDuration(p);
+      const a = Math.min(duration - (p.fertilizerBonusMs ?? 0), p.growthAccelMs ?? 0);
+      const oldFert = p.fertilizerBonusMs ?? 0;
+      const add = duration * FERTILIZER_DIRECT_DURATION_RATIO;
+      const newFert = Math.min(Math.max(0, duration - a), oldFert + add);
+
+      return flushed.map((slot, i) => {
+        if (i !== slotIndex || !slot) return slot;
+        const { fertilizerMult: _old, ...rest } = slot;
+        return {
+          ...rest,
+          fertilizerUses: prevUses + 1,
+          fertilizerBonusMs: newFert,
+          growthAccelMs: a,
+          growthAccelAnchorAt: now,
+        };
+      });
     });
   };
 
@@ -366,6 +442,8 @@ export default function Component() {
     if (!plant) return;
     if (computePlantProgress(plant, growthOpts) >= 100) return;
 
+    const now = Date.now();
+
     setItemInventory((inv) => {
       const n = (inv[ITEM_THERMOSTAT] || 0) - 1;
       const next = { ...inv };
@@ -374,8 +452,9 @@ export default function Component() {
       return next;
     });
 
-    setGrowingPlants((plants) =>
-      plants.map((p, i) => {
+    setGrowingPlants((plants) => {
+      const flushed = mapFlushAllGrowingPlants(plants, growthOpts, now);
+      return flushed.map((p, i) => {
         if (p == null) return null;
         if (i === slotIndex) return { ...p, growthMult: THERMOSTAT_GROWTH_MULT };
         if (p.growthMult != null && p.growthMult > 1) {
@@ -383,8 +462,8 @@ export default function Component() {
           return rest as GrowingPlantSlot;
         }
         return p;
-      }),
-    );
+      });
+    });
   };
 
   const handleUnlockSlot = (price: number) => {
@@ -402,6 +481,7 @@ export default function Component() {
         plantId: seedId,
         plantedAt: Date.now(),
         growDurationMs: getGrowDurationMs(seedId),
+        growthModelVersion: 2,
       };
       setGrowingPlants(newGrowingPlants);
 
@@ -432,29 +512,43 @@ export default function Component() {
       persistentSlotSoil[slotIndex] ?? (plant.superSoil ? ("super" as const) : null);
 
     let fruitCount = rollBaseHarvestFruitCount(plant.plantId);
-    if (pendingGloveDoubleNextHarvest) {
-      fruitCount *= 2;
-      setPendingGloveDoubleNextHarvest(false);
-    }
     if (soilTier === "super") fruitCount = Math.round(fruitCount * SUPER_SOIL_HARVEST_MULT);
     else if (soilTier === "advanced") fruitCount = Math.round(fruitCount * ADVANCED_SOIL_HARVEST_MULT);
     fruitCount = Math.max(1, fruitCount);
+    if (ownsGardenGloves) {
+      fruitCount *= GARDEN_GLOVES_HARVEST_MULT;
+    }
 
     const collectibleId = rollHarvestCollectibleDefId(plant.plantId, soilTier);
-    if (collectibleId) {
-      setCollectibleBackpack((bp) => ({
-        ...bp,
-        [collectibleId]: (bp[collectibleId] || 0) + 1,
-      }));
-    }
+    let bonusId: string | null = null;
     if (soilTier === "super" && Math.random() < 0.25) {
-      const bonusId = rollHarvestCollectibleDefId(plant.plantId, soilTier);
-      if (bonusId) {
-        setCollectibleBackpack((bp) => ({
-          ...bp,
-          [bonusId]: (bp[bonusId] || 0) + 1,
-        }));
-      }
+      bonusId = rollHarvestCollectibleDefId(plant.plantId, soilTier);
+    }
+
+    const collAdds: Record<string, number> = {};
+    if (collectibleId) collAdds[collectibleId] = (collAdds[collectibleId] || 0) + 1;
+    if (bonusId) collAdds[bonusId] = (collAdds[bonusId] || 0) + 1;
+
+    const seedEntry = getSeedEntry(plant.plantId);
+    const fruitDisplayName = seedEntry?.name?.replace("种子", "果实") ?? plant.plantId;
+
+    setHarvestRewards({
+      fruits: [{ id: plant.plantId, name: fruitDisplayName, count: fruitCount }],
+      collectibles: Object.entries(collAdds).map(([id, count]) => ({
+        id,
+        name: getCollectibleDef(id)?.name ?? id,
+        count,
+      })),
+    });
+
+    if (Object.keys(collAdds).length > 0) {
+      setCollectibleBackpack((bp) => {
+        const next = { ...bp };
+        for (const [id, n] of Object.entries(collAdds)) {
+          next[id] = (next[id] || 0) + n;
+        }
+        return next;
+      });
     }
 
     setHarvestedFruits((fruits) => ({
@@ -482,25 +576,30 @@ export default function Component() {
     }
   };
 
-  const handleSellFruit = (fruitId: string) => {
+  const handleSellFruit = (fruitId: string, quantity: number) => {
     const seed = getSeedEntry(fruitId);
-    if (!seed || (harvestedFruits[fruitId] || 0) < 1) return;
+    if (!seed) return;
+    const have = harvestedFruits[fruitId] || 0;
+    const q = Math.min(Math.max(1, Math.floor(quantity)), have);
+    if (q < 1) return;
     const unit = fruitSellUnitPrice(fruitId, seed.fruitPrice, collectibleBackpack, exhibitionCollectibles);
-    setCoins((c) => c + unit);
+    setCoins((c) => c + unit * q);
     setHarvestedFruits((fruits) => ({
       ...fruits,
-      [fruitId]: fruits[fruitId] - 1,
+      [fruitId]: fruits[fruitId] - q,
     }));
   };
 
-  const handleSellCollectible = (defId: string) => {
+  const handleSellCollectible = (defId: string, quantity: number) => {
     if (!getCollectibleDef(defId)) return;
     const price = sellPriceForCollectibleDefId(defId);
-    if (price <= 0 || (collectibleBackpack[defId] || 0) < 1) return;
-    setCoins((c) => c + price);
+    const have = collectibleBackpack[defId] || 0;
+    const q = Math.min(Math.max(1, Math.floor(quantity)), have);
+    if (price <= 0 || q < 1) return;
+    setCoins((c) => c + price * q);
     setCollectibleBackpack((bp) => {
       const next = { ...bp };
-      const left = (next[defId] || 0) - 1;
+      const left = (next[defId] || 0) - q;
       if (left <= 0) delete next[defId];
       else next[defId] = left;
       return next;
@@ -568,7 +667,7 @@ export default function Component() {
       className={`app-shell flex min-h-0 w-full items-center justify-center overflow-hidden ${
         playingBg ? "bg-cover bg-center bg-no-repeat" : "bg-gradient-to-br from-green-300 via-emerald-200 to-teal-300"
       }`}
-      style={playingBg ? { backgroundImage: `url(${gameplayBgUrl})` } : undefined}
+      style={playingBg && playingBgUrl ? { backgroundImage: `url(${playingBgUrl})` } : undefined}
     >
       {gameState === "menu" && (
         <MainMenu
@@ -584,24 +683,35 @@ export default function Component() {
       )}
 
       {gameState === "playing" && (
-        <GameScreen
-          score={score}
-          roundId={roundId}
-          roundSeconds={roundSeconds}
-          isModalOpen={modalOpen}
-          onScoreDelta={(delta) => setScore((s) => s + delta)}
-          onRestartRound={handleRestartRound}
-          onBackToMenu={handleBackToMenu}
-          onVictory={handleVictory}
-          onDefeat={handleDefeat}
-        />
+        <Suspense fallback={<LazyScreenFallback />}>
+          <GameScreen
+            score={score}
+            roundId={roundId}
+            roundSeconds={roundSeconds}
+            isModalOpen={modalOpen}
+            onScoreDelta={(delta) => setScore((s) => s + delta)}
+            onRestartRound={handleRestartRound}
+            onBackToMenu={handleBackToMenu}
+            onVictory={handleVictory}
+            onDefeat={handleDefeat}
+          />
+        </Suspense>
       )}
 
-      {gameState === "records" && <RecordsScreen onBackToMenu={handleBackToMenu} />}
+      {gameState === "records" && (
+        <Suspense fallback={<LazyScreenFallback />}>
+          <RecordsScreen onBackToMenu={handleBackToMenu} />
+        </Suspense>
+      )}
 
-      {gameState === "settings" && <SettingsScreen onBackToMenu={handleBackToMenu} />}
+      {gameState === "settings" && (
+        <Suspense fallback={<LazyScreenFallback />}>
+          <SettingsScreen onBackToMenu={handleBackToMenu} />
+        </Suspense>
+      )}
 
       {gameState === "nurture" && (
+        <Suspense fallback={<LazyScreenFallback />}>
         <NurtureScreen
           coins={coins}
           unlockedSlots={unlockedSlots}
@@ -619,11 +729,12 @@ export default function Component() {
           ownsGardenGloves={ownsGardenGloves}
           ownsSimulatedSun={ownsSimulatedSun}
           ownsAutoWatering={ownsAutoWatering}
-          ownsAdvancedSoil={ownsAdvancedSoil}
-          ownsSuperSoil={ownsSuperSoil}
           persistentSlotSoil={persistentSlotSoil}
-          pendingGloveDoubleNextHarvest={pendingGloveDoubleNextHarvest}
           growthOpts={growthOpts}
+          harvestRewards={harvestRewards}
+          onCloseHarvestRewards={() => setHarvestRewards(null)}
+          shopNotice={shopNotice}
+          onDismissShopNotice={() => setShopNotice(null)}
           onBackToMenu={handleBackToMenu}
           onBuySeed={handleBuySeed}
           onBuyItem={handleBuyItem}
@@ -638,7 +749,6 @@ export default function Component() {
           onMoveFruitToExhibition={handleMoveFruitToExhibition}
           onRemoveFruitFromExhibition={handleRemoveFruitFromExhibition}
           onShovelPlant={handleShovelPlant}
-          onUseGardenGloves={handleUseGardenGloves}
           onToggleSun={handleToggleSun}
           onActivateWatering={handleActivateWatering}
           onUseWaterRefill={handleUseWaterRefill}
@@ -646,6 +756,7 @@ export default function Component() {
           onApplyFertilizer={handleApplyFertilizer}
           onApplyThermostat={handleApplyThermostat}
         />
+        </Suspense>
       )}
 
       {showVictory && (

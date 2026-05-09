@@ -28,6 +28,14 @@ export interface GrowingPlantSlot {
   growthMult?: number;
   /** 肥料：本株已施肥次数（最多 3，与 item-catalog 一致） */
   fertilizerUses?: number;
+  /** 日照/浇水/控温：已积分加速量（毫秒，指向 total duration） */
+  growthAccelMs?: number;
+  /** 与 growthAccelMs 配套的墙上时钟锚点 */
+  growthAccelAnchorAt?: number;
+  /** 肥料直接推进的毫秒总和（与加速积分相加，上限一株 duration） */
+  fertilizerBonusMs?: number;
+  /** 2 = 新生长模型（加速积分 + 肥料直加），缺省视为旧档需迁移 */
+  growthModelVersion?: number;
   /** 旧存档：已废弃，读档时迁移为 fertilizerUses */
   fertilizerMult?: number;
   /** 旧存档：超级土壤标在植株上，读档后会迁移到 persistentSlotSoil */
@@ -47,7 +55,7 @@ export interface GameProgress {
   exhibitionCollectibles: string[];
   /** 果实展台：各作物果实数量 */
   exhibitionFruits: Record<string, number>;
-  /** 仅消耗品：肥料、蓄水 */
+  /** 消耗品：肥料、蓄水、高级/超级土壤包等 */
   itemInventory: Record<string, number>;
   /** 模拟太阳：开启则全局加速，无时限，可关闭 */
   sunBoostActive: boolean;
@@ -58,11 +66,7 @@ export interface GameProgress {
   ownsGardenGloves: boolean;
   ownsSimulatedSun: boolean;
   ownsAutoWatering: boolean;
-  ownsAdvancedSoil: boolean;
-  ownsSuperSoil: boolean;
   persistentSlotSoil: PersistentSlotSoil;
-  /** 园艺手套：下一次收获果实数量翻倍 */
-  pendingGloveDoubleNextHarvest: boolean;
 }
 
 const STORAGE_KEY = "little-gardener-progress-v1";
@@ -84,10 +88,7 @@ export const DEFAULT_GAME_PROGRESS: GameProgress = {
   ownsGardenGloves: false,
   ownsSimulatedSun: false,
   ownsAutoWatering: false,
-  ownsAdvancedSoil: false,
-  ownsSuperSoil: false,
   persistentSlotSoil: [null, null, null, null],
-  pendingGloveDoubleNextHarvest: false,
 };
 
 function clampInt(n: unknown, fallback: number, min: number, max: number): number {
@@ -181,14 +182,9 @@ function migrateLegacyOwnership(inv: Record<string, number>, o: Record<string, u
   const gl = o.ownsGardenGloves === true || (legacy[ITEM_GARDEN_GLOVES] || 0) > 0;
   const sn = o.ownsSimulatedSun === true || (legacy[ITEM_SIMULATED_SUN] || 0) > 0;
   const aw = o.ownsAutoWatering === true || (legacy[ITEM_AUTO_WATERING] || 0) > 0;
-  const ad = o.ownsAdvancedSoil === true || (legacy[ITEM_ADVANCED_SOIL] || 0) > 0;
-  const su = o.ownsSuperSoil === true || (legacy[ITEM_SUPER_SOIL] || 0) > 0;
-
   if (gl) out.ownsGardenGloves = true;
   if (sn) out.ownsSimulatedSun = true;
   if (aw) out.ownsAutoWatering = true;
-  if (ad) out.ownsAdvancedSoil = true;
-  if (su) out.ownsSuperSoil = true;
 
   return out;
 }
@@ -219,13 +215,19 @@ function parseProgress(raw: string | null): GameProgress | null {
     const legacyInv = normalizeInventory(o.itemInventory);
     const migratedOwns = migrateLegacyOwnership(legacyInv, o);
 
-    /** 旧版永久道具堆叠 → 仅保留消耗品格子 */
+    /** 旧版永久道具堆叠 → 仅保留消耗品格子（土壤包保留在库存） */
     const cleanInv: Record<string, number> = { ...legacyInv };
     delete cleanInv[ITEM_GARDEN_GLOVES];
     delete cleanInv[ITEM_SIMULATED_SUN];
     delete cleanInv[ITEM_AUTO_WATERING];
-    delete cleanInv[ITEM_ADVANCED_SOIL];
-    delete cleanInv[ITEM_SUPER_SOIL];
+
+    /** 旧版「永久土壤」改为按包购买：曾解锁则各补偿 4 包（满槽可铺） */
+    if (o.ownsAdvancedSoil === true) {
+      cleanInv[ITEM_ADVANCED_SOIL] = (cleanInv[ITEM_ADVANCED_SOIL] || 0) + 4;
+    }
+    if (o.ownsSuperSoil === true) {
+      cleanInv[ITEM_SUPER_SOIL] = (cleanInv[ITEM_SUPER_SOIL] || 0) + 4;
+    }
 
     let wateringNeedsRefill = o.wateringNeedsRefill === true;
     if (
@@ -260,15 +262,7 @@ function parseProgress(raw: string | null): GameProgress | null {
       ownsGardenGloves: Boolean(migratedOwns.ownsGardenGloves || o.ownsGardenGloves === true),
       ownsSimulatedSun: Boolean(migratedOwns.ownsSimulatedSun || o.ownsSimulatedSun === true),
       ownsAutoWatering: Boolean(migratedOwns.ownsAutoWatering || o.ownsAutoWatering === true),
-      ownsAdvancedSoil: Boolean(migratedOwns.ownsAdvancedSoil || o.ownsAdvancedSoil === true),
-      ownsSuperSoil: Boolean(migratedOwns.ownsSuperSoil || o.ownsSuperSoil === true),
       persistentSlotSoil,
-      pendingGloveDoubleNextHarvest:
-        typeof o.pendingGloveDoubleNextHarvest === "boolean"
-          ? o.pendingGloveDoubleNextHarvest
-          : typeof o.pendingGloveHarvestBonus === "number" &&
-              Number.isFinite(o.pendingGloveHarvestBonus) &&
-              Math.floor(o.pendingGloveHarvestBonus) > 0,
     };
   } catch {
     return null;
@@ -304,8 +298,6 @@ function applyPostLoadMigration(p: GameProgress): GameProgress {
     ownsGardenGloves: p.ownsGardenGloves,
     ownsSimulatedSun: p.ownsSimulatedSun,
     ownsAutoWatering: p.ownsAutoWatering,
-    ownsAdvancedSoil: p.ownsAdvancedSoil,
-    ownsSuperSoil: p.ownsSuperSoil,
   };
 }
 

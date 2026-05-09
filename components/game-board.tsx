@@ -14,7 +14,7 @@ import {
   type Grid,
   type Rect,
 } from "../game-grid-gen";
-import numberCageUrl from "../pics/numbercage.png";
+import numberCageUrl from "../pics/numbercage.png?format=webp&quality=85";
 
 function makeRect(
   a: { r: number; c: number } | null,
