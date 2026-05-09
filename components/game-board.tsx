@@ -280,14 +280,14 @@ export function GameBoard({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col touch-none select-none">
-      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 text-sm text-emerald-800 sm:text-base">
-        <div className="rounded-lg bg-white/80 px-2 py-1 shadow-sm sm:px-3 sm:py-1.5">
+      <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-1.5 text-xs text-emerald-800 sm:mb-3 sm:gap-2 sm:text-sm">
+        <div className="rounded-md bg-white/85 px-1.5 py-0.5 shadow-sm sm:rounded-lg sm:px-2.5 sm:py-1">
           框内和：<span className="font-bold tabular-nums text-emerald-700">{rect ? selectionSum : 0}</span>
         </div>
-        <div className="rounded-lg bg-white/80 px-2 py-1 shadow-sm sm:px-3 sm:py-1.5">
+        <div className="rounded-md bg-white/85 px-1.5 py-0.5 shadow-sm sm:rounded-lg sm:px-2.5 sm:py-1">
           剩余：<span className="font-bold tabular-nums text-emerald-700">{cellsLeft}</span>
         </div>
-        <div className="rounded-lg bg-amber-100/90 px-2 py-1 shadow-sm sm:px-3 sm:py-1.5">
+        <div className="rounded-md bg-amber-100/90 px-1.5 py-0.5 shadow-sm sm:rounded-lg sm:px-2.5 sm:py-1">
           <span className="font-bold tabular-nums text-amber-800">{timeLeft}</span> 秒
         </div>
       </div>
@@ -308,7 +308,7 @@ export function GameBoard({
         className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center"
       >
         <div
-          className="grid min-h-0 min-w-0 gap-2 rounded-xl border-2 border-emerald-300/80 bg-emerald-50/50 p-2 sm:gap-1.5 sm:p-2"
+          className="grid min-h-0 min-w-0 gap-2 p-1 sm:gap-1.5 sm:p-2"
           style={{
             boxSizing: "border-box",
             width: boardPx.w > 0 ? `${boardPx.w}px` : "100%",
