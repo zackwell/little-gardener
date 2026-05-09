@@ -12,13 +12,22 @@ import {
   ITEM_THERMOSTAT,
   ITEM_WATER_REFILL,
   SHOP_ITEMS,
-  formatSunBoostRemainShort,
+  formatSunBoostStatus,
   formatWateringRemainShort,
   getShopItem,
 } from "../item-catalog";
-import { type GrowthComputeOpts, computePlantProgress, formatPlantRemainShort } from "../plant-growth";
+import {
+  MAX_EXHIBITION_COLLECTIBLES,
+  MAX_EXHIBITION_FRUIT_UNITS,
+  fruitSellUnitPrice,
+  getCollectibleDef,
+  qualityLabel,
+  sellPriceForCollectibleDefId,
+} from "../collectible-catalog";
+import { type GrowthComputeOpts, computePlantProgress, formatPlantRemainClock } from "../plant-growth";
 import { setMusicScene } from "../game-audio";
 import { SEEDS as seeds, shovelRefundForSeed } from "../seed-catalog";
+import { getPlantGrowthVisual, getSeedInventoryIcon } from "../seed-visuals";
 
 interface NurtureScreenProps {
   coins: number;
@@ -27,8 +36,11 @@ interface NurtureScreenProps {
   seedInventory: { [key: string]: number };
   exhibitionPlants: string[];
   harvestedFruits: { [key: string]: number };
+  collectibleBackpack: Record<string, number>;
+  exhibitionCollectibles: string[];
+  exhibitionFruits: Record<string, number>;
   itemInventory: Record<string, number>;
-  sunBoostUntil: number | null;
+  sunBoostActive: boolean;
   wateringBoostUntil: number | null;
   wateringNeedsRefill: boolean;
   ownsGardenGloves: boolean;
@@ -37,7 +49,7 @@ interface NurtureScreenProps {
   ownsAdvancedSoil: boolean;
   ownsSuperSoil: boolean;
   persistentSlotSoil: PersistentSlotSoil;
-  pendingGloveHarvestBonus: number;
+  pendingGloveDoubleNextHarvest: boolean;
   growthOpts: GrowthComputeOpts;
   onBackToMenu: () => void;
   onBuySeed: (seedId: string, price: number) => void;
@@ -46,11 +58,16 @@ interface NurtureScreenProps {
   onPlantSeed: (slotIndex: number, seedId: string) => void;
   onHarvestPlant: (slotIndex: number) => void;
   onMoveToExhibition: (slotIndex: number) => void;
-  onSellFruit: (fruitId: string, price: number) => void;
+  onSellFruit: (fruitId: string) => void;
+  onSellCollectible: (defId: string) => void;
+  onMoveCollectibleToExhibition: (defId: string) => void;
+  onRemoveCollectibleFromExhibition: (displayIndex: number) => void;
+  onMoveFruitToExhibition: (fruitId: string) => void;
+  onRemoveFruitFromExhibition: (fruitId: string) => void;
   /** 铲除生长中的植株，返还半价金币 */
   onShovelPlant: (slotIndex: number) => void;
   onUseGardenGloves: () => void;
-  onActivateSun: () => void;
+  onToggleSun: () => void;
   onActivateWatering: () => void;
   onUseWaterRefill: () => void;
   onLayPersistentSoil: (tier: "advanced" | "super", slotIndex: number) => void;
@@ -68,8 +85,11 @@ export function NurtureScreen({
   seedInventory,
   exhibitionPlants,
   harvestedFruits,
+  collectibleBackpack,
+  exhibitionCollectibles,
+  exhibitionFruits,
   itemInventory,
-  sunBoostUntil,
+  sunBoostActive,
   wateringBoostUntil,
   wateringNeedsRefill,
   ownsGardenGloves,
@@ -78,7 +98,7 @@ export function NurtureScreen({
   ownsAdvancedSoil,
   ownsSuperSoil,
   persistentSlotSoil,
-  pendingGloveHarvestBonus,
+  pendingGloveDoubleNextHarvest,
   growthOpts,
   onBackToMenu,
   onBuySeed,
@@ -88,20 +108,34 @@ export function NurtureScreen({
   onHarvestPlant,
   onMoveToExhibition,
   onSellFruit,
+  onSellCollectible,
+  onMoveCollectibleToExhibition,
+  onRemoveCollectibleFromExhibition,
+  onMoveFruitToExhibition,
+  onRemoveFruitFromExhibition,
   onShovelPlant,
   onUseGardenGloves,
-  onActivateSun,
+  onToggleSun,
   onActivateWatering,
   onUseWaterRefill,
   onLayPersistentSoil,
   onApplyFertilizer,
   onApplyThermostat,
 }: NurtureScreenProps) {
+  /** 每秒刷新剩余时间与浇水倒计时（加速时光标走动更快） */
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setClockTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const [activeTab, setActiveTab] = useState<"nursery" | "shop" | "exhibition" | "market">("nursery");
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   /** 种子商店：查看详情的种子 id */
   const [shopSeedDetailId, setShopSeedDetailId] = useState<string | null>(null);
   const [shopItemDetailId, setShopItemDetailId] = useState<string | null>(null);
+  /** 展览区：查看藏品详情 */
+  const [collectibleDetailId, setCollectibleDetailId] = useState<string | null>(null);
   const [slotPickMode, setSlotPickMode] = useState<null | "advanced_soil" | "super_soil" | "fertilizer" | "thermostat">(
     null,
   );
@@ -119,6 +153,9 @@ export function NurtureScreen({
       setShopSeedDetailId(null);
       setShopItemDetailId(null);
     }
+    if (activeTab !== "exhibition") {
+      setCollectibleDetailId(null);
+    }
   }, [activeTab]);
 
   useEffect(() => {
@@ -126,14 +163,18 @@ export function NurtureScreen({
   }, [activeTab]);
 
   const shopDetailItem = shopItemDetailId ? getShopItem(shopItemDetailId) : undefined;
+  const collectibleDetailDef = collectibleDetailId ? getCollectibleDef(collectibleDetailId) : undefined;
 
   const handlePlantClick = (slotIndex: number, seedId: string) => {
     onPlantSeed(slotIndex, seedId);
     setSelectedSlot(null);
   };
 
-  const sunHint = formatSunBoostRemainShort(sunBoostUntil);
+  const sunStatus = formatSunBoostStatus(sunBoostActive);
   const waterHint = formatWateringRemainShort(wateringBoostUntil);
+  const wateringAccelerating =
+    wateringBoostUntil != null && Number.isFinite(wateringBoostUntil) && Date.now() < wateringBoostUntil;
+  const fruitOnDisplayTotal = Object.values(exhibitionFruits).reduce((a, n) => a + n, 0);
 
   return (
     <div className="panel-90 flex min-h-0 w-full max-w-4xl flex-col rounded-3xl bg-white/95 p-6 shadow-2xl">
@@ -316,7 +357,25 @@ export function NurtureScreen({
                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900">超级土壤</span>
                             )}
                           </div>
-                          <div className="text-7xl mb-3">{seedInfo?.emoji}</div>
+                          {seedInfo ? (
+                            (() => {
+                              const vis = getPlantGrowthVisual(plant.plantId, progressPct, seedInfo.emoji);
+                              return vis.type === "image" ? (
+                                <div className="mb-3 flex h-28 items-center justify-center">
+                                  <img
+                                    src={vis.src}
+                                    alt={vis.alt}
+                                    className="max-h-full max-w-[min(100%,9rem)] object-contain drop-shadow-sm"
+                                    draggable={false}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="mb-3 text-7xl">{vis.emoji}</div>
+                              );
+                            })()
+                          ) : (
+                            <div className="mb-3 text-7xl">🌱</div>
+                          )}
                           <p className="text-green-700 mb-2">{seedInfo?.name}</p>
                           <div className="w-full bg-gray-200 rounded-full h-3 mb-3">
                             <div
@@ -326,7 +385,18 @@ export function NurtureScreen({
                           </div>
                           <p className="text-sm text-green-600 mb-1">{progressPct}% 完成</p>
                           {progressPct < 100 ? (
-                            <p className="mb-3 text-xs text-emerald-600">{formatPlantRemainShort(plant, growthOpts)}</p>
+                            <div className="mb-3">
+                              <p className="font-mono text-xs tabular-nums text-emerald-700">
+                                {formatPlantRemainClock(plant, growthOpts)}
+                              </p>
+                              {(sunBoostActive || wateringAccelerating || (plant.growthMult ?? 1) > 1) ? (
+                                <p className="mt-0.5 text-[11px] text-sky-700">
+                                  {sunBoostActive ? "日照加速中 · " : ""}
+                                  {wateringAccelerating ? "浇水加速中 · " : ""}
+                                  {(plant.growthMult ?? 1) > 1 ? "控温加速中" : ""}
+                                </p>
+                              ) : null}
+                            </div>
                           ) : (
                             <p className="mb-3 text-xs text-amber-600">已成熟，可以收获</p>
                           )}
@@ -401,15 +471,13 @@ export function NurtureScreen({
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-2xl text-green-700">可用道具</h3>
                 <div className="flex max-w-[min(100%,22rem)] flex-col items-end gap-1 text-right">
-                  {sunHint ? <span className="text-sm font-medium text-amber-800">{sunHint}</span> : null}
+                  {sunStatus ? <span className="text-sm font-medium text-amber-800">{sunStatus}</span> : null}
                   {waterHint ? <span className="text-sm font-medium text-cyan-800">{waterHint}</span> : null}
                   {ownsAutoWatering && wateringNeedsRefill && !waterHint ? (
                     <span className="text-sm font-medium text-orange-700">浇水器：需蓄水后可再次启动</span>
                   ) : null}
-                  {pendingGloveHarvestBonus > 0 ? (
-                    <span className="text-sm font-medium text-emerald-700">
-                      手套加成：下次收获额外 +{pendingGloveHarvestBonus} 个果实
-                    </span>
+                  {pendingGloveDoubleNextHarvest ? (
+                    <span className="text-sm font-medium text-emerald-700">手套：下次收获果实数量翻倍</span>
                   ) : null}
                 </div>
               </div>
@@ -453,7 +521,7 @@ export function NurtureScreen({
                             onClick={onUseGardenGloves}
                             className="mt-2 w-full rounded-lg bg-green-500 py-1.5 text-xs font-semibold text-white hover:bg-green-600 disabled:bg-gray-300"
                           >
-                            叠加收成
+                            {pendingGloveDoubleNextHarvest ? "已预备翻倍" : "预备翻倍"}
                           </button>
                         ) : (
                           <button
@@ -482,10 +550,12 @@ export function NurtureScreen({
                           <button
                             type="button"
                             disabled={!!slotPickMode}
-                            onClick={onActivateSun}
-                            className="mt-2 w-full rounded-lg bg-amber-500 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:bg-gray-300"
+                            onClick={onToggleSun}
+                            className={`mt-2 w-full rounded-lg py-1.5 text-xs font-semibold text-white disabled:bg-gray-300 ${
+                              sunBoostActive ? "bg-orange-600 hover:bg-orange-700" : "bg-amber-500 hover:bg-amber-600"
+                            }`}
                           >
-                            激活日照
+                            {sunBoostActive ? "关闭模拟太阳" : "开启模拟太阳"}
                           </button>
                         ) : (
                           <button
@@ -715,6 +785,7 @@ export function NurtureScreen({
               <div className="grid grid-cols-3 gap-4">
                 {seeds.map((seed) => {
                   const owned = seedInventory[seed.id] || 0;
+                  const invIcon = getSeedInventoryIcon(seed.id, seed.emoji);
 
                   return (
                     <button
@@ -723,7 +794,18 @@ export function NurtureScreen({
                       onClick={() => setShopSeedDetailId(seed.id)}
                       className="bg-gradient-to-br from-orange-50 to-red-50 rounded-2xl p-5 border-2 border-orange-200 text-left transition-all hover:border-orange-400 hover:shadow-md"
                     >
-                      <div className="text-6xl mb-3 text-center">{seed.emoji}</div>
+                      <div className="mb-3 flex h-20 items-center justify-center">
+                        {invIcon.kind === "img" ? (
+                          <img
+                            src={invIcon.src}
+                            alt=""
+                            className="max-h-full max-w-full object-contain"
+                            draggable={false}
+                          />
+                        ) : (
+                          <span className="text-6xl">{invIcon.emoji}</span>
+                        )}
+                      </div>
                       <div className="text-base font-medium mb-1 text-orange-800 text-center">{seed.name}</div>
                       <div className="text-xs text-orange-600 mb-2 text-center flex items-center justify-center gap-1">
                         <Sprout className="w-3 h-3 shrink-0" />
@@ -776,33 +858,212 @@ export function NurtureScreen({
 
         {/* 展览区 */}
         {activeTab === "exhibition" && (
-          <div>
-            <h3 className="text-2xl text-purple-600 mb-4 flex items-center">
-              <Image className="w-6 h-6 mr-2" />
-              我的展览区
-            </h3>
-            <div className="grid grid-cols-4 gap-4">
-              {exhibitionPlants.length === 0 ? (
-                <div className="col-span-4 text-center py-16 text-purple-600">
-                  <div className="text-8xl mb-4">🖼️</div>
-                  <p className="text-lg">展览区还是空的</p>
-                  <p className="text-sm text-purple-500 mt-2">将培育完成的植物移到这里展示吧！</p>
-                </div>
-              ) : (
-                exhibitionPlants.map((plantId, index) => {
-                  const seedInfo = getSeedInfo(plantId);
-                  return (
-                    <div
-                      key={index}
-                      className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border-2 border-purple-200 text-center"
-                    >
-                      <div className="text-7xl mb-3">{seedInfo?.emoji}</div>
-                      <div className="text-sm text-purple-700">{seedInfo?.name}</div>
-                      <div className="text-xs text-purple-500 mt-2">⭐ 展览中</div>
-                    </div>
-                  );
-                })
-              )}
+          <div className="space-y-10 pb-4">
+            <div>
+              <h3 className="mb-4 flex items-center text-2xl text-purple-600">
+                <Image className="mr-2 h-6 w-6" />
+                植物展品
+              </h3>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                {exhibitionPlants.length === 0 ? (
+                  <div className="col-span-full py-10 text-center text-purple-600">
+                    <div className="mb-3 text-6xl">🖼️</div>
+                    <p className="text-base">还没有植物展品</p>
+                    <p className="mt-2 text-sm text-purple-500">将成熟的植株移到此处展示</p>
+                  </div>
+                ) : (
+                  exhibitionPlants.map((plantId, index) => {
+                    const seedInfo = getSeedInfo(plantId);
+                    const invIcon = seedInfo ? getSeedInventoryIcon(plantId, seedInfo.emoji) : null;
+                    return (
+                      <div
+                        key={`p-${index}-${plantId}`}
+                        className="rounded-2xl border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-pink-50 p-4 text-center"
+                      >
+                        <div className="mb-2 flex h-16 items-center justify-center">
+                          {invIcon?.kind === "img" ? (
+                            <img src={invIcon.src} alt="" className="max-h-full object-contain" draggable={false} />
+                          ) : (
+                            <span className="text-5xl">{seedInfo?.emoji ?? "🌱"}</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-purple-800">{seedInfo?.name ?? plantId}</div>
+                        <div className="mt-1 text-xs text-purple-500">展览中</div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-4 flex items-center text-xl text-rose-700">
+                果实展台（{fruitOnDisplayTotal}/{MAX_EXHIBITION_FRUIT_UNITS}）
+              </h3>
+              <p className="mb-3 text-sm text-rose-700/85">
+                从「果实市场」每次送<strong className="mx-0.5">1 个</strong>果实到此陈列；取下后回到市场库存。
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {fruitOnDisplayTotal === 0 ? (
+                  <div className="w-full rounded-2xl border border-rose-100 bg-rose-50/60 py-10 text-center text-rose-800">
+                    暂无陈列果实
+                  </div>
+                ) : (
+                  Object.entries(exhibitionFruits)
+                    .filter(([, n]) => n > 0)
+                    .flatMap(([fruitId, qty]) => {
+                      const info = getSeedInfo(fruitId);
+                      return Array.from({ length: qty }, (_, i) => (
+                        <div
+                          key={`${fruitId}-${i}`}
+                          className="relative flex w-[calc(50%-0.375rem)] min-w-[140px] flex-col items-center rounded-2xl border-2 border-rose-200 bg-gradient-to-br from-rose-50 to-orange-50 p-3 sm:w-[calc(33.333%-0.5rem)]"
+                        >
+                          <button
+                            type="button"
+                            className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-gray-500 hover:bg-white"
+                            aria-label="取下"
+                            onClick={() => onRemoveFruitFromExhibition(fruitId)}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                          <span className="text-4xl">{info?.emoji ?? "🍎"}</span>
+                          <span className="mt-2 text-center text-xs font-medium text-rose-900">
+                            {(info?.name ?? fruitId).replace("种子", "果实")}
+                          </span>
+                        </div>
+                      ));
+                    })
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 flex items-center text-xl text-violet-700">藏品背包</h3>
+              <p className="mb-4 text-sm text-violet-600/90">
+                收获时会附带一枚关联藏品；放进展台也能当作小小展览。点卡片可看简介。
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {Object.entries(collectibleBackpack).filter(([, n]) => n > 0).length === 0 ? (
+                  <div className="col-span-full rounded-2xl border border-violet-100 bg-violet-50/50 py-12 text-center text-violet-700">
+                    <p>背包空空如也</p>
+                    <p className="mt-2 text-sm text-violet-500">去收获番茄等作物试试吧</p>
+                  </div>
+                ) : (
+                  Object.entries(collectibleBackpack)
+                    .filter(([, n]) => n > 0)
+                    .flatMap(([defId, qty]) => {
+                      const def = getCollectibleDef(defId);
+                      if (!def) return [];
+                      const sell = sellPriceForCollectibleDefId(defId);
+                      const canShow = exhibitionCollectibles.length < MAX_EXHIBITION_COLLECTIBLES;
+                      return [
+                        <div
+                          key={defId}
+                          className="flex gap-2 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm sm:gap-3"
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            className="flex min-w-0 flex-1 cursor-pointer gap-3 rounded-xl p-0.5 outline-offset-2 hover:bg-violet-50/60"
+                            onClick={() => setCollectibleDetailId(defId)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setCollectibleDetailId(defId);
+                              }
+                            }}
+                          >
+                            <img
+                              src={def.image}
+                              alt=""
+                              className="h-20 w-20 shrink-0 rounded-xl border border-violet-100 bg-violet-50 object-contain"
+                              draggable={false}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="font-semibold text-violet-900">{def.name}</div>
+                              <div className="mt-0.5 text-xs text-violet-600">
+                                {qualityLabel(def.quality)} · ×{qty}
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-[11px] text-gray-600">{def.description}</p>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 flex-col justify-center gap-2">
+                            <button
+                              type="button"
+                              disabled={!canShow}
+                              onClick={() => canShow && onMoveCollectibleToExhibition(defId)}
+                              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white ${
+                                canShow ? "bg-purple-500 hover:bg-purple-600" : "cursor-not-allowed bg-gray-300"
+                              }`}
+                            >
+                              上架展台
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSellCollectible(defId)}
+                              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600"
+                            >
+                              卖出 +{sell}
+                            </button>
+                          </div>
+                        </div>,
+                      ];
+                    })
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-4 text-xl text-fuchsia-700">
+                藏品展台（{exhibitionCollectibles.length}/{MAX_EXHIBITION_COLLECTIBLES}）
+              </h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {exhibitionCollectibles.length === 0 ? (
+                  <div className="col-span-full py-8 text-center text-fuchsia-700/80">
+                    暂无上架藏品 · 从背包点击「上架展台」
+                  </div>
+                ) : (
+                  exhibitionCollectibles.map((defId, idx) => {
+                    const def = getCollectibleDef(defId);
+                    if (!def) return null;
+                    return (
+                      <div
+                        key={`c-${idx}-${defId}`}
+                        role="button"
+                        tabIndex={0}
+                        className="relative cursor-pointer rounded-2xl border-2 border-fuchsia-200 bg-gradient-to-br from-fuchsia-50 to-pink-50 p-3 text-center outline-offset-2 hover:ring-2 hover:ring-fuchsia-200/80"
+                        onClick={() => setCollectibleDetailId(defId)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setCollectibleDetailId(defId);
+                          }
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 z-10 rounded-full bg-white/90 p-1 text-gray-500 shadow hover:bg-white hover:text-gray-800"
+                          aria-label="取下"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            onRemoveCollectibleFromExhibition(idx);
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                        <img
+                          src={def.image}
+                          alt=""
+                          className="mx-auto mb-2 h-16 w-16 object-contain"
+                          draggable={false}
+                        />
+                        <div className="text-xs font-medium text-fuchsia-900">{def.name}</div>
+                        <div className="mt-1 text-[10px] text-fuchsia-600">{qualityLabel(def.quality)}</div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -814,10 +1075,17 @@ export function NurtureScreen({
               <Store className="w-6 h-6 mr-2" />
               果实市场
             </h3>
+            <p className="mb-4 text-sm text-blue-700/90">
+              收获的果实暂存在此：可<strong className="mx-0.5">单个售出</strong>，或将<strong className="mx-0.5">1 个</strong>送至「展览区 · 果实展台」陈列（其余仍留在市场出售）。
+            </p>
             <div className="grid grid-cols-3 gap-4">
               {seeds.map((seed) => {
                 const count = harvestedFruits[seed.id] || 0;
-                
+                const unit = fruitSellUnitPrice(seed.id, seed.fruitPrice, collectibleBackpack, exhibitionCollectibles);
+                const licensed = unit !== seed.fruitPrice;
+                const canShowFruit =
+                  count > 0 && fruitOnDisplayTotal < MAX_EXHIBITION_FRUIT_UNITS;
+
                 return (
                   <div
                     key={seed.id}
@@ -832,18 +1100,38 @@ export function NurtureScreen({
                     <div className="text-sm text-blue-600 mb-3 text-center">
                       库存: {count} 个
                     </div>
-                    <button
-                      onClick={() => count > 0 && onSellFruit(seed.id, seed.fruitPrice)}
-                      disabled={count === 0}
-                      className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 ${
-                        count > 0
-                          ? "bg-green-500 hover:bg-green-600 text-white"
-                          : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                      }`}
-                    >
-                      <Coins className="w-4 h-4" />
-                      卖出 (+{seed.fruitPrice})
-                    </button>
+                    {licensed && count > 0 ? (
+                      <p className="mb-2 text-center text-xs text-amber-700">涨价许可生效 · 单价已上浮</p>
+                    ) : null}
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => count > 0 && onSellFruit(seed.id)}
+                        disabled={count === 0}
+                        className={`w-full py-2 rounded-lg flex items-center justify-center gap-2 ${
+                          count > 0
+                            ? "bg-green-500 hover:bg-green-600 text-white"
+                            : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                        }`}
+                      >
+                        <Coins className="w-4 h-4" />
+                        卖出 1 个 (+{unit})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => canShowFruit && onMoveFruitToExhibition(seed.id)}
+                        disabled={!canShowFruit}
+                        className={`w-full rounded-lg py-2 text-center text-sm font-medium ${
+                          canShowFruit
+                            ? "bg-purple-500 text-white hover:bg-purple-600"
+                            : "cursor-not-allowed bg-gray-200 text-gray-500"
+                        }`}
+                      >
+                        {fruitOnDisplayTotal >= MAX_EXHIBITION_FRUIT_UNITS
+                          ? "展台已满"
+                          : "送 1 个去果实展台"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -897,6 +1185,7 @@ export function NurtureScreen({
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {seedsInInventory.map((seed) => {
                     const count = seedInventory[seed.id] || 0;
+                    const invIcon = getSeedInventoryIcon(seed.id, seed.emoji);
                     return (
                       <button
                         key={seed.id}
@@ -904,7 +1193,13 @@ export function NurtureScreen({
                         onClick={() => handlePlantClick(selectedSlot, seed.id)}
                         className="rounded-2xl border-2 border-green-200 bg-green-50/80 p-4 text-center transition-all hover:border-green-400 hover:bg-green-100"
                       >
-                        <div className="text-4xl">{seed.emoji}</div>
+                        <div className="flex h-14 items-center justify-center">
+                          {invIcon.kind === "img" ? (
+                            <img src={invIcon.src} alt="" className="max-h-full object-contain" draggable={false} />
+                          ) : (
+                            <span className="text-4xl">{invIcon.emoji}</span>
+                          )}
+                        </div>
                         <div className="mt-2 text-sm font-medium text-green-800">{seed.name}</div>
                         <div className="mt-1 text-xs text-green-600">× {count}</div>
                       </button>
@@ -949,7 +1244,14 @@ export function NurtureScreen({
             </button>
             <div className="overflow-y-auto px-6 pb-6 pt-10">
               <div className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-50 to-amber-100 text-7xl shadow-inner ring-2 ring-orange-100">
-                {shopDetailSeed.emoji}
+                {(() => {
+                  const ic = getSeedInventoryIcon(shopDetailSeed.id, shopDetailSeed.emoji);
+                  return ic.kind === "img" ? (
+                    <img src={ic.src} alt="" className="max-h-[90%] max-w-[90%] object-contain" draggable={false} />
+                  ) : (
+                    ic.emoji
+                  );
+                })()}
               </div>
               <h3 id="seed-detail-title" className="text-center text-xl font-bold text-orange-900">
                 {shopDetailSeed.name}
@@ -964,6 +1266,11 @@ export function NurtureScreen({
                 </span>
               </div>
               <p className="mt-5 leading-relaxed text-gray-600">{shopDetailSeed.description}</p>
+              {shopDetailSeed.flavor ? (
+                <p className="mt-3 border-t border-orange-100 pt-3 text-sm leading-relaxed text-gray-500">
+                  {shopDetailSeed.flavor}
+                </p>
+              ) : null}
               <button
                 type="button"
                 disabled={coins < shopDetailSeed.price}
@@ -1066,6 +1373,53 @@ export function NurtureScreen({
                   </button>
                 );
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 展览区 · 藏品详情 */}
+      {collectibleDetailDef && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="collectible-detail-title"
+          onClick={() => setCollectibleDetailId(null)}
+        >
+          <div
+            className="max-h-panel-90 relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setCollectibleDetailId(null)}
+              className="absolute right-3 top-3 z-10 rounded-full bg-white/90 p-2 text-gray-600 shadow-sm hover:bg-gray-100"
+              aria-label="关闭"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="overflow-y-auto px-6 pb-8 pt-10">
+              <div className="mx-auto mb-4 flex h-28 w-28 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-50 to-violet-100 shadow-inner ring-2 ring-fuchsia-100">
+                <img
+                  src={collectibleDetailDef.image}
+                  alt=""
+                  className="max-h-[88%] max-w-[88%] object-contain"
+                  draggable={false}
+                />
+              </div>
+              <h3 id="collectible-detail-title" className="text-center text-xl font-bold text-fuchsia-900">
+                {collectibleDetailDef.name}
+              </h3>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm">
+                <span className="rounded-full bg-fuchsia-100 px-3 py-1 text-fuchsia-800">
+                  {qualityLabel(collectibleDetailDef.quality)}
+                </span>
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
+                  回收约 {sellPriceForCollectibleDefId(collectibleDetailDef.id)} 金币
+                </span>
+              </div>
+              <p className="mt-5 leading-relaxed text-gray-600">{collectibleDetailDef.description}</p>
             </div>
           </div>
         </div>

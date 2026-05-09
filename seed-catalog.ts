@@ -9,8 +9,15 @@ export interface SeedCatalogEntry {
   growTime: string;
   /** 实际生长毫秒（种植逻辑用） */
   growDurationMs: number;
+  /** 成熟果实单颗基础售出价（涨价许可证在此基础上 +15%） */
   fruitPrice: number;
+  /** 单次收获果实数量随机区间（闭区间）；默认 1 */
+  harvestMin?: number;
+  harvestMax?: number;
+  /** 商店详情：简短定位，不写细规则 */
   description: string;
+  /** 可选：一句氛围/小科普 */
+  flavor?: string;
 }
 
 export const SEEDS: SeedCatalogEntry[] = [
@@ -18,11 +25,14 @@ export const SEEDS: SeedCatalogEntry[] = [
     id: "seed1",
     name: "番茄种子",
     emoji: "🍅",
-    price: 50,
+    price: 30,
     growTime: "2小时",
     growDurationMs: 2 * 60 * 60 * 1000,
-    fruitPrice: 30,
-    description: "经典蔬果，生长稳健、收成可观，适合刚打理花园的新手。果实酸甜多汁，料理百搭。",
+    fruitPrice: 39,
+    harvestMin: 2,
+    harvestMax: 4,
+    description: "百搭蔬果，新手友好。",
+    flavor: "红彤彤挂满枝头的时候，最有园艺成就感。",
   },
   {
     id: "seed2",
@@ -31,8 +41,11 @@ export const SEEDS: SeedCatalogEntry[] = [
     price: 60,
     growTime: "3小时",
     growDurationMs: 3 * 60 * 60 * 1000,
-    fruitPrice: 40,
-    description: "矮株易照料，成熟时散发淡淡甜香。适合摆在日照充足的槽位，耐心等待红润果实。",
+    fruitPrice: 20,
+    harvestMin: 15,
+    harvestMax: 20,
+    description: "人气浆果，收成常常很可观。",
+    flavor: "成熟时香甜扑鼻，摆在温室里格外养眼。",
   },
   {
     id: "seed3",
@@ -42,7 +55,8 @@ export const SEEDS: SeedCatalogEntry[] = [
     growTime: "4小时",
     growDurationMs: 4 * 60 * 60 * 1000,
     fruitPrice: 60,
-    description: "生长周期较长，但一颗大果足以回本。需要较多日照与水分，收获时成就感满满。",
+    description: "大果压秤，适合有耐心的大回合。",
+    flavor: "切开那一声脆响，夏天就来了。",
   },
   {
     id: "seed4",
@@ -52,7 +66,8 @@ export const SEEDS: SeedCatalogEntry[] = [
     growTime: "3.5小时",
     growDurationMs: Math.round(3.5 * 60 * 60 * 1000),
     fruitPrice: 50,
-    description: "成串果实适合收集与出售，藤蔓型作物，成熟时紫莹莹颇为养眼。",
+    description: "成串采收，颜值很高。",
+    flavor: "紫莹莹一串挂在架上，像迷你葡萄园。",
   },
   {
     id: "seed5",
@@ -62,7 +77,8 @@ export const SEEDS: SeedCatalogEntry[] = [
     growTime: "3小时",
     growDurationMs: 3 * 60 * 60 * 1000,
     fruitPrice: 45,
-    description: "清香醒神，果实适合加工或出售。对环境适应力强，是稳妥的经济作物之一。",
+    description: "清香提神，百搭作物。",
+    flavor: "金黄果皮带着酸味香气，很治愈。",
   },
   {
     id: "seed6",
@@ -72,7 +88,8 @@ export const SEEDS: SeedCatalogEntry[] = [
     growTime: "3.5小时",
     growDurationMs: Math.round(3.5 * 60 * 60 * 1000),
     fruitPrice: 55,
-    description: "高品质小果，市价可观。生长略挑照料，但红润剔透的收成值得等待。",
+    description: "小果精致，适合收藏型园丁。",
+    flavor: "红润剔透，像宝石贴在枝头。",
   },
 ];
 
@@ -85,4 +102,18 @@ export function shovelRefundForSeed(seedId: string): number {
 export function getGrowDurationMs(seedId: string): number {
   const ms = SEEDS.find((s) => s.id === seedId)?.growDurationMs;
   return typeof ms === "number" && ms > 0 ? ms : 2 * 60 * 60 * 1000;
+}
+
+export function getSeedEntry(seedId: string): SeedCatalogEntry | undefined {
+  return SEEDS.find((s) => s.id === seedId);
+}
+
+/** 本次收获随机果实数量（未含手套翻倍与土壤倍率） */
+export function rollBaseHarvestFruitCount(seedId: string): number {
+  const s = getSeedEntry(seedId);
+  const min = s?.harvestMin ?? 1;
+  const max = s?.harvestMax ?? min;
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
 }

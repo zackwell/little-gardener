@@ -631,6 +631,148 @@ function cloneGrid(g: Grid): Grid {
   return g.map((row) => [...row]) as Grid;
 }
 
+/**
+ * 死局换手：保留空格位置不变，只打乱仍有数字的格子上的数码；
+ * 尽量生成至少一处可框选凑十。多重随机 + 几何兜底。
+ */
+export function reshuffleFilledDigitsPreserveShape(grid: Grid): Grid {
+  const mask = grid.map((row) => row.map((v) => v !== null));
+
+  const assignFromFull = (full: Grid): Grid => {
+    const next = cloneGrid(grid);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (mask[r][c]) next[r][c] = full[r][c]!;
+        else next[r][c] = null;
+      }
+    }
+    return next;
+  };
+
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const full = makeSolvableGrid();
+    const next = assignFromFull(full);
+    if (hasAnyValidMove(next)) return next;
+  }
+
+  const positions: [number, number][] = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (mask[r][c]) positions.push([r, c]);
+    }
+  }
+
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const full = makeSolvableGrid();
+    const vals = shuffle(positions.map(([r, c]) => full[r][c]!));
+    const next = cloneGrid(grid);
+    positions.forEach(([r, c], i) => {
+      next[r][c] = vals[i]!;
+    });
+    if (hasAnyValidMove(next)) return next;
+  }
+
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const next = cloneGrid(grid);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (mask[r][c]) next[r][c] = 1 + Math.floor(Math.random() * 9);
+      }
+    }
+    if (hasAnyValidMove(next)) return next;
+  }
+
+  return forceValidMoveByGeometry(cloneGrid(grid), mask, positions);
+}
+
+/** 在极端随机仍无解时，通过相邻或共线两格凑十强行破局（不改变 mask） */
+function forceValidMoveByGeometry(
+  _grid: Grid,
+  mask: boolean[][],
+  positions: [number, number][],
+): Grid {
+  const next = cloneGrid(_grid);
+  const filled = positions;
+
+  // 1) 正交相邻两格 → 1×2 / 2×1 矩形和为 10
+  for (const [r, c] of filled) {
+    for (const [dr, dc] of [
+      [0, 1],
+      [1, 0],
+      [0, -1],
+      [-1, 0],
+    ] as const) {
+      const nr = r + dr;
+      const nc = c + dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      if (!mask[nr][nc]) continue;
+      next[r][c] = 4;
+      next[nr][nc] = 6;
+      return next;
+    }
+  }
+
+  // 2) 同一行、中间无其它实格 → 扁矩形内仅两枚数字，和为 10
+  for (let i = 0; i < filled.length; i++) {
+    for (let j = i + 1; j < filled.length; j++) {
+      const [r1, c1] = filled[i]!;
+      const [r2, c2] = filled[j]!;
+      if (r1 !== r2) continue;
+      const lo = Math.min(c1, c2);
+      const hi = Math.max(c1, c2);
+      let ok = true;
+      for (let cc = lo + 1; cc < hi; cc++) {
+        if (mask[r1][cc]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        next[r1][c1] = 3;
+        next[r2][c2] = 7;
+        return next;
+      }
+    }
+  }
+
+  // 3) 同一列
+  for (let i = 0; i < filled.length; i++) {
+    for (let j = i + 1; j < filled.length; j++) {
+      const [r1, c1] = filled[i]!;
+      const [r2, c2] = filled[j]!;
+      if (c1 !== c2) continue;
+      const lo = Math.min(r1, r2);
+      const hi = Math.max(r1, r2);
+      let ok = true;
+      for (let rr = lo + 1; rr < hi; rr++) {
+        if (mask[rr][c1]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        next[r1][c1] = 2;
+        next[r2][c2] = 8;
+        return next;
+      }
+    }
+  }
+
+  // 4) 单格遗留（理论上无法凑十）— 保持随机填充避免崩溃
+  if (filled.length === 1) {
+    const [r, c] = filled[0]!;
+    next[r][c] = 5;
+    return next;
+  }
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (mask[r][c]) next[r][c] = 1 + Math.floor(Math.random() * 9);
+    }
+  }
+  return next;
+}
+
 function gridDigitSum(g: Grid): number {
   let s = 0;
   for (let r = 0; r < ROWS; r++) {

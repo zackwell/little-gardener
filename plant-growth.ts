@@ -29,8 +29,8 @@ export function computePlantProgress(plant: GrowingPlantSlot, opts?: GrowthCompu
   return Math.min(100, Math.max(0, Math.floor((elapsedEff / duration) * 100)));
 }
 
-/** 生长中剩余时间简短文案 */
-export function formatPlantRemainShort(plant: GrowingPlantSlot, opts?: GrowthComputeOpts): string {
+/** 生长中剩余真实时间（加速状态下倒计时走得更快），精确到秒 */
+export function formatPlantRemainClock(plant: GrowingPlantSlot, opts?: GrowthComputeOpts, now = Date.now()): string {
   const duration =
     typeof plant.growDurationMs === "number" && plant.growDurationMs > 0
       ? plant.growDurationMs
@@ -38,15 +38,17 @@ export function formatPlantRemainShort(plant: GrowingPlantSlot, opts?: GrowthCom
   const plantedAt = plant.plantedAt;
   if (!Number.isFinite(plantedAt) || duration <= 0) return "";
   const factor = effectiveGrowthFactor(plant, opts);
-  const remain = plantedAt + duration / factor - Date.now();
-  if (remain <= 0) return "即将成熟";
-  const sec = Math.ceil(remain / 1000);
-  const m = Math.ceil(sec / 60);
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
-    return mm > 0 ? `剩余约 ${h} 小时 ${mm} 分` : `剩余约 ${h} 小时`;
-  }
-  if (m <= 1) return "剩余不到 1 分钟";
-  return `剩余约 ${m} 分钟`;
+  const remainMs = plantedAt + duration / factor - now;
+  if (remainMs <= 0) return "即将成熟";
+  const totalSec = Math.max(0, Math.ceil(remainMs / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `剩余 ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `剩余 ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** @deprecated 保留兼容；培育室请用 formatPlantRemainClock */
+export function formatPlantRemainShort(plant: GrowingPlantSlot, opts?: GrowthComputeOpts): string {
+  return formatPlantRemainClock(plant, opts);
 }

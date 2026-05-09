@@ -10,6 +10,7 @@ import {
   hasAnyValidMove,
   makeSolvableGrid,
   rectSum,
+  reshuffleFilledDigitsPreserveShape,
   type Grid,
   type Rect,
 } from "../game-grid-gen";
@@ -71,6 +72,9 @@ export function GameBoard({
   const [shakeMask, setShakeMask] = useState<boolean[][]>(() =>
     Array.from({ length: ROWS }, () => Array(COLS).fill(false)),
   );
+
+  /** 死局自动洗牌：提示 → 动画 → 仅重排数字 */
+  const [shufflePhase, setShufflePhase] = useState<"idle" | "warning" | "shuffling">("idle");
 
   const defeatSentRef = useRef(false);
   const victorySentRef = useRef(false);
@@ -209,6 +213,7 @@ export function GameBoard({
     anchorDragRef.current = null;
     cornerDragRef.current = null;
     setShakeMask(Array.from({ length: ROWS }, () => Array(COLS).fill(false)));
+    setShufflePhase("idle");
   }, [roundId, roundSeconds]);
 
   useEffect(() => {
@@ -243,6 +248,39 @@ export function GameBoard({
     [gameEnded, cellsLeft, grid],
   );
 
+  useEffect(() => {
+    if (gameEnded || isPaused || isFrozen) {
+      setShufflePhase("idle");
+      return;
+    }
+    if (!deadlock) {
+      setShufflePhase("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const tAnimRef: { id: ReturnType<typeof setTimeout> | undefined } = { id: undefined };
+    setShufflePhase("warning");
+
+    const tWarn = window.setTimeout(() => {
+      if (cancelled) return;
+      setShufflePhase("shuffling");
+      tAnimRef.id = window.setTimeout(() => {
+        if (cancelled) return;
+        const newGrid = reshuffleFilledDigitsPreserveShape(gridRef.current);
+        setGrid(newGrid);
+        gridRef.current = newGrid;
+        setShufflePhase("idle");
+      }, 720);
+    }, 1400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tWarn);
+      if (tAnimRef.id !== undefined) window.clearTimeout(tAnimRef.id);
+    };
+  }, [deadlock, gameEnded, isPaused, isFrozen]);
+
   useLayoutEffect(() => {
     const el = boardAreaRef.current;
     if (!el) return;
@@ -276,7 +314,7 @@ export function GameBoard({
     return r >= rect.rMin && r <= rect.rMax && c >= rect.cMin && c <= rect.cMax;
   };
 
-  const inputLocked = gameEnded || isFrozen || isPaused;
+  const inputLocked = gameEnded || isFrozen || isPaused || shufflePhase === "shuffling";
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col touch-none select-none">
@@ -292,10 +330,9 @@ export function GameBoard({
         </div>
       </div>
 
-      {deadlock && (
-        <div className="mb-2 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-center text-sm text-amber-900 sm:text-base">
-          当前没有能凑成 10 的框选，局面可能已被「拆碎」。请点上方<strong className="mx-1">重新开始本局</strong>
-          换一盘（新盘由矩阵块拼成、保证有解，乱消仍可能走进死胡同）。
+      {shufflePhase === "warning" && (
+        <div className="mb-2 shrink-0 rounded-lg border border-sky-400 bg-sky-50 px-3 py-2 text-center text-sm text-sky-950 shadow-sm sm:text-base">
+          当前无数字可消除，即将洗牌…
         </div>
       )}
 
@@ -308,7 +345,12 @@ export function GameBoard({
         className="flex h-full min-h-0 w-full min-w-0 flex-1 items-center justify-center"
       >
         <div
-          className="grid min-h-0 min-w-0 gap-2 p-1 sm:gap-1.5 sm:p-2"
+          className={[
+            "grid min-h-0 min-w-0 gap-2 p-1 sm:gap-1.5 sm:p-2",
+            shufflePhase === "shuffling" ? "animate-[board-shuffle_0.72s_ease-in-out]" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           style={{
             boxSizing: "border-box",
             width: boardPx.w > 0 ? `${boardPx.w}px` : "100%",
@@ -339,6 +381,7 @@ export function GameBoard({
                     : "cursor-pointer bg-emerald-600 bg-contain bg-center bg-no-repeat text-white shadow-sm [text-shadow:0_1px_2px_rgba(0,0,0,0.55)] active:scale-95",
                   !empty && inSel ? "z-[1] scale-[1.02] ring-2 ring-sky-300 ring-offset-0" : "",
                   shake ? "animate-[cell-shake_0.35s_ease]" : "",
+                  shufflePhase === "shuffling" && !empty ? "animate-[digit-flip_0.72s_ease-in-out]" : "",
                   inputLocked && !empty ? "opacity-70" : "",
                 ]
                   .filter(Boolean)
@@ -358,6 +401,18 @@ export function GameBoard({
           0%, 100% { transform: translateX(0); }
           25% { transform: translateX(-3px); }
           75% { transform: translateX(3px); }
+        }
+        @keyframes digit-flip {
+          0%, 100% { transform: scale(1) rotateY(0deg); filter: brightness(1); }
+          35% { transform: scale(0.88) rotateY(90deg); filter: brightness(1.4); }
+          70% { transform: scale(1.06) rotateY(180deg); filter: brightness(1.15); }
+        }
+        @keyframes board-shuffle {
+          0%, 100% { transform: translate(0, 0); }
+          20% { transform: translate(-2px, 1px); }
+          40% { transform: translate(2px, -2px); }
+          60% { transform: translate(-1px, -1px); }
+          80% { transform: translate(1px, 2px); }
         }
       `}</style>
     </div>

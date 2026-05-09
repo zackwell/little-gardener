@@ -41,10 +41,16 @@ export interface GameProgress {
   seedInventory: Record<string, number>;
   exhibitionPlants: string[];
   harvestedFruits: Record<string, number>;
+  /** 收获藏品背包（defId → 数量） */
+  collectibleBackpack: Record<string, number>;
+  /** 展览区已上架的藏品实例（defId，可重复） */
+  exhibitionCollectibles: string[];
+  /** 果实展台：各作物果实数量 */
+  exhibitionFruits: Record<string, number>;
   /** 仅消耗品：肥料、蓄水 */
   itemInventory: Record<string, number>;
-  /** 模拟太阳结束时间 */
-  sunBoostUntil: number | null;
+  /** 模拟太阳：开启则全局加速，无时限，可关闭 */
+  sunBoostActive: boolean;
   /** 浇水效果结束时间 */
   wateringBoostUntil: number | null;
   /** 浇水一轮结束后需蓄水才可再启动 */
@@ -55,8 +61,8 @@ export interface GameProgress {
   ownsAdvancedSoil: boolean;
   ownsSuperSoil: boolean;
   persistentSlotSoil: PersistentSlotSoil;
-  /** 园艺手套叠加的额外果实（下次收获结算） */
-  pendingGloveHarvestBonus: number;
+  /** 园艺手套：下一次收获果实数量翻倍 */
+  pendingGloveDoubleNextHarvest: boolean;
 }
 
 const STORAGE_KEY = "little-gardener-progress-v1";
@@ -68,8 +74,11 @@ export const DEFAULT_GAME_PROGRESS: GameProgress = {
   seedInventory: {},
   exhibitionPlants: [],
   harvestedFruits: {},
+  collectibleBackpack: {},
+  exhibitionCollectibles: [],
+  exhibitionFruits: {},
   itemInventory: {},
-  sunBoostUntil: null,
+  sunBoostActive: false,
   wateringBoostUntil: null,
   wateringNeedsRefill: false,
   ownsGardenGloves: false,
@@ -78,7 +87,7 @@ export const DEFAULT_GAME_PROGRESS: GameProgress = {
   ownsAdvancedSoil: false,
   ownsSuperSoil: false,
   persistentSlotSoil: [null, null, null, null],
-  pendingGloveHarvestBonus: 0,
+  pendingGloveDoubleNextHarvest: false,
 };
 
 function clampInt(n: unknown, fallback: number, min: number, max: number): number {
@@ -165,11 +174,6 @@ function normalizeGrowingPlants(raw: unknown): GameProgress["growingPlants"] {
   return base;
 }
 
-function clampPendingGlove(raw: unknown): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
-  return Math.min(99, Math.max(0, Math.floor(raw)));
-}
-
 function migrateLegacyOwnership(inv: Record<string, number>, o: Record<string, unknown>): Partial<GameProgress> {
   const legacy = normalizeInventory(o.itemInventory);
   const out: Partial<GameProgress> = {};
@@ -196,9 +200,15 @@ function parseProgress(raw: string | null): GameProgress | null {
     if (!j || typeof j !== "object") return null;
     const o = j as Record<string, unknown>;
 
-    let sunBoostUntil: number | null = null;
-    if (typeof o.sunBoostUntil === "number" && Number.isFinite(o.sunBoostUntil) && o.sunBoostUntil > 0) {
-      sunBoostUntil = Math.round(o.sunBoostUntil);
+    let sunBoostActive = false;
+    if (typeof o.sunBoostActive === "boolean") {
+      sunBoostActive = o.sunBoostActive;
+    } else if (
+      typeof o.sunBoostUntil === "number" &&
+      Number.isFinite(o.sunBoostUntil) &&
+      o.sunBoostUntil > Date.now()
+    ) {
+      sunBoostActive = true;
     }
 
     let wateringBoostUntil: number | null = null;
@@ -238,8 +248,13 @@ function parseProgress(raw: string | null): GameProgress | null {
         ? o.exhibitionPlants.filter((x): x is string => typeof x === "string")
         : [],
       harvestedFruits: normalizeInventory(o.harvestedFruits),
+      collectibleBackpack: normalizeInventory(o.collectibleBackpack),
+      exhibitionCollectibles: Array.isArray(o.exhibitionCollectibles)
+        ? o.exhibitionCollectibles.filter((x): x is string => typeof x === "string")
+        : [],
+      exhibitionFruits: normalizeInventory(o.exhibitionFruits),
       itemInventory: cleanInv,
-      sunBoostUntil,
+      sunBoostActive,
       wateringBoostUntil,
       wateringNeedsRefill,
       ownsGardenGloves: Boolean(migratedOwns.ownsGardenGloves || o.ownsGardenGloves === true),
@@ -248,7 +263,12 @@ function parseProgress(raw: string | null): GameProgress | null {
       ownsAdvancedSoil: Boolean(migratedOwns.ownsAdvancedSoil || o.ownsAdvancedSoil === true),
       ownsSuperSoil: Boolean(migratedOwns.ownsSuperSoil || o.ownsSuperSoil === true),
       persistentSlotSoil,
-      pendingGloveHarvestBonus: clampPendingGlove(o.pendingGloveHarvestBonus),
+      pendingGloveDoubleNextHarvest:
+        typeof o.pendingGloveDoubleNextHarvest === "boolean"
+          ? o.pendingGloveDoubleNextHarvest
+          : typeof o.pendingGloveHarvestBonus === "number" &&
+              Number.isFinite(o.pendingGloveHarvestBonus) &&
+              Math.floor(o.pendingGloveHarvestBonus) > 0,
     };
   } catch {
     return null;
@@ -297,6 +317,9 @@ export function loadGameProgress(): GameProgress {
       seedInventory: { ...DEFAULT_GAME_PROGRESS.seedInventory },
       exhibitionPlants: [...DEFAULT_GAME_PROGRESS.exhibitionPlants],
       harvestedFruits: { ...DEFAULT_GAME_PROGRESS.harvestedFruits },
+      collectibleBackpack: { ...DEFAULT_GAME_PROGRESS.collectibleBackpack },
+      exhibitionCollectibles: [...DEFAULT_GAME_PROGRESS.exhibitionCollectibles],
+      exhibitionFruits: { ...DEFAULT_GAME_PROGRESS.exhibitionFruits },
       itemInventory: { ...DEFAULT_GAME_PROGRESS.itemInventory },
       persistentSlotSoil: [...DEFAULT_GAME_PROGRESS.persistentSlotSoil] as PersistentSlotSoil,
     };
@@ -309,6 +332,9 @@ export function loadGameProgress(): GameProgress {
       seedInventory: { ...DEFAULT_GAME_PROGRESS.seedInventory },
       exhibitionPlants: [...DEFAULT_GAME_PROGRESS.exhibitionPlants],
       harvestedFruits: { ...DEFAULT_GAME_PROGRESS.harvestedFruits },
+      collectibleBackpack: { ...DEFAULT_GAME_PROGRESS.collectibleBackpack },
+      exhibitionCollectibles: [...DEFAULT_GAME_PROGRESS.exhibitionCollectibles],
+      exhibitionFruits: { ...DEFAULT_GAME_PROGRESS.exhibitionFruits },
       itemInventory: { ...DEFAULT_GAME_PROGRESS.itemInventory },
       persistentSlotSoil: [...DEFAULT_GAME_PROGRESS.persistentSlotSoil] as PersistentSlotSoil,
     };
@@ -319,6 +345,9 @@ export function loadGameProgress(): GameProgress {
     seedInventory: { ...parsed.seedInventory },
     exhibitionPlants: [...parsed.exhibitionPlants],
     harvestedFruits: { ...parsed.harvestedFruits },
+    collectibleBackpack: { ...parsed.collectibleBackpack },
+    exhibitionCollectibles: [...parsed.exhibitionCollectibles],
+    exhibitionFruits: { ...parsed.exhibitionFruits },
     itemInventory: { ...parsed.itemInventory },
     persistentSlotSoil: [...parsed.persistentSlotSoil] as PersistentSlotSoil,
   };

@@ -26,7 +26,6 @@ import {
   ITEM_WATER_REFILL,
   THERMOSTAT_GROWTH_MULT,
   SUPER_SOIL_HARVEST_MULT,
-  SUN_BOOST_DURATION_MS,
   WATERING_BOOST_DURATION_MS,
   getCombinedGlobalGrowthMult,
   getShopItem,
@@ -37,7 +36,15 @@ import { playSfxDefeat, playSfxVictory, setMusicScene } from "./game-audio";
 import gameplayBgUrl from "./pics/gameplay.png";
 import { useGameSettings } from "./settings-context";
 import type { DefeatPayload, VictoryPayload } from "./game-types";
-import { getGrowDurationMs, shovelRefundForSeed } from "./seed-catalog";
+import {
+  MAX_EXHIBITION_COLLECTIBLES,
+  MAX_EXHIBITION_FRUIT_UNITS,
+  fruitSellUnitPrice,
+  rollHarvestCollectibleDefId,
+  sellPriceForCollectibleDefId,
+  getCollectibleDef,
+} from "./collectible-catalog";
+import { getGrowDurationMs, getSeedEntry, rollBaseHarvestFruitCount, shovelRefundForSeed } from "./seed-catalog";
 
 export default function Component() {
   const { settings, roundSeconds, toggleMusic } = useGameSettings();
@@ -70,10 +77,19 @@ export default function Component() {
   const [harvestedFruits, setHarvestedFruits] = useState<{ [key: string]: number }>(() => ({
     ...initialProgress.harvestedFruits,
   }));
+  const [collectibleBackpack, setCollectibleBackpack] = useState<Record<string, number>>(() => ({
+    ...initialProgress.collectibleBackpack,
+  }));
+  const [exhibitionCollectibles, setExhibitionCollectibles] = useState<string[]>(() => [
+    ...initialProgress.exhibitionCollectibles,
+  ]);
+  const [exhibitionFruits, setExhibitionFruits] = useState<Record<string, number>>(() => ({
+    ...initialProgress.exhibitionFruits,
+  }));
   const [itemInventory, setItemInventory] = useState<Record<string, number>>(() => ({
     ...initialProgress.itemInventory,
   }));
-  const [sunBoostUntil, setSunBoostUntil] = useState<number | null>(() => initialProgress.sunBoostUntil);
+  const [sunBoostActive, setSunBoostActive] = useState(() => initialProgress.sunBoostActive);
   const [wateringBoostUntil, setWateringBoostUntil] = useState<number | null>(
     () => initialProgress.wateringBoostUntil,
   );
@@ -86,20 +102,21 @@ export default function Component() {
   const [persistentSlotSoil, setPersistentSlotSoil] = useState<PersistentSlotSoil>(
     () => [...initialProgress.persistentSlotSoil] as PersistentSlotSoil,
   );
-  const [pendingGloveHarvestBonus, setPendingGloveHarvestBonus] = useState(() => initialProgress.pendingGloveHarvestBonus);
+  const [pendingGloveDoubleNextHarvest, setPendingGloveDoubleNextHarvest] = useState(
+    () => initialProgress.pendingGloveDoubleNextHarvest,
+  );
 
-  const globalGrowthMult = getCombinedGlobalGrowthMult(sunBoostUntil, wateringBoostUntil);
+  const globalGrowthMult = getCombinedGlobalGrowthMult(sunBoostActive, wateringBoostUntil);
   const growthOpts = useMemo(() => ({ globalGrowthMult }), [globalGrowthMult]);
 
   /** 日照 / 浇水倒计时期间每秒刷新 */
   const [buffTick, setBuffTick] = useState(0);
   useEffect(() => {
-    const sunOn = sunBoostUntil != null && Date.now() < sunBoostUntil;
     const waterOn = wateringBoostUntil != null && Date.now() < wateringBoostUntil;
-    if (!sunOn && !waterOn) return;
+    if (!waterOn) return;
     const id = window.setInterval(() => setBuffTick((n) => n + 1), 1000);
     return () => clearInterval(id);
-  }, [sunBoostUntil, wateringBoostUntil]);
+  }, [wateringBoostUntil]);
 
   useEffect(() => {
     if (ownsAutoWatering && wateringBoostUntil != null && Date.now() >= wateringBoostUntil) {
@@ -116,8 +133,11 @@ export default function Component() {
       seedInventory,
       exhibitionPlants,
       harvestedFruits,
+      collectibleBackpack,
+      exhibitionCollectibles,
+      exhibitionFruits,
       itemInventory,
-      sunBoostUntil,
+      sunBoostActive,
       wateringBoostUntil,
       wateringNeedsRefill,
       ownsGardenGloves,
@@ -126,7 +146,7 @@ export default function Component() {
       ownsAdvancedSoil,
       ownsSuperSoil,
       persistentSlotSoil,
-      pendingGloveHarvestBonus,
+      pendingGloveDoubleNextHarvest,
     });
   }, [
     coins,
@@ -135,8 +155,11 @@ export default function Component() {
     seedInventory,
     exhibitionPlants,
     harvestedFruits,
+    collectibleBackpack,
+    exhibitionCollectibles,
+    exhibitionFruits,
     itemInventory,
-    sunBoostUntil,
+    sunBoostActive,
     wateringBoostUntil,
     wateringNeedsRefill,
     ownsGardenGloves,
@@ -145,7 +168,7 @@ export default function Component() {
     ownsAdvancedSoil,
     ownsSuperSoil,
     persistentSlotSoil,
-    pendingGloveHarvestBonus,
+    pendingGloveDoubleNextHarvest,
   ]);
 
   const bumpRound = () => setRoundId((r) => r + 1);
@@ -272,16 +295,12 @@ export default function Component() {
 
   const handleUseGardenGloves = () => {
     if (!ownsGardenGloves) return;
-    setPendingGloveHarvestBonus((b) => Math.min(99, b + 1));
+    setPendingGloveDoubleNextHarvest(true);
   };
 
-  const handleActivateSun = () => {
+  const handleToggleSun = () => {
     if (!ownsSimulatedSun) return;
-    setSunBoostUntil((prev) => {
-      const now = Date.now();
-      const base = prev != null && prev > now ? prev : now;
-      return base + SUN_BOOST_DURATION_MS;
-    });
+    setSunBoostActive((v) => !v);
   };
 
   const handleActivateWatering = () => {
@@ -409,13 +428,34 @@ export default function Component() {
     const plant = growingPlants[slotIndex];
     if (!plant || computePlantProgress(plant, growthOpts) < 100) return;
 
-    let fruitCount = 1 + pendingGloveHarvestBonus;
     const soilTier =
       persistentSlotSoil[slotIndex] ?? (plant.superSoil ? ("super" as const) : null);
+
+    let fruitCount = rollBaseHarvestFruitCount(plant.plantId);
+    if (pendingGloveDoubleNextHarvest) {
+      fruitCount *= 2;
+      setPendingGloveDoubleNextHarvest(false);
+    }
     if (soilTier === "super") fruitCount = Math.round(fruitCount * SUPER_SOIL_HARVEST_MULT);
     else if (soilTier === "advanced") fruitCount = Math.round(fruitCount * ADVANCED_SOIL_HARVEST_MULT);
     fruitCount = Math.max(1, fruitCount);
-    setPendingGloveHarvestBonus(0);
+
+    const collectibleId = rollHarvestCollectibleDefId(plant.plantId, soilTier);
+    if (collectibleId) {
+      setCollectibleBackpack((bp) => ({
+        ...bp,
+        [collectibleId]: (bp[collectibleId] || 0) + 1,
+      }));
+    }
+    if (soilTier === "super" && Math.random() < 0.25) {
+      const bonusId = rollHarvestCollectibleDefId(plant.plantId, soilTier);
+      if (bonusId) {
+        setCollectibleBackpack((bp) => ({
+          ...bp,
+          [bonusId]: (bp[bonusId] || 0) + 1,
+        }));
+      }
+    }
 
     setHarvestedFruits((fruits) => ({
       ...fruits,
@@ -442,14 +482,81 @@ export default function Component() {
     }
   };
 
-  const handleSellFruit = (fruitId: string, price: number) => {
-    if (harvestedFruits[fruitId] > 0) {
-      setCoins(coins + price);
-      setHarvestedFruits({
-        ...harvestedFruits,
-        [fruitId]: harvestedFruits[fruitId] - 1,
-      });
-    }
+  const handleSellFruit = (fruitId: string) => {
+    const seed = getSeedEntry(fruitId);
+    if (!seed || (harvestedFruits[fruitId] || 0) < 1) return;
+    const unit = fruitSellUnitPrice(fruitId, seed.fruitPrice, collectibleBackpack, exhibitionCollectibles);
+    setCoins((c) => c + unit);
+    setHarvestedFruits((fruits) => ({
+      ...fruits,
+      [fruitId]: fruits[fruitId] - 1,
+    }));
+  };
+
+  const handleSellCollectible = (defId: string) => {
+    if (!getCollectibleDef(defId)) return;
+    const price = sellPriceForCollectibleDefId(defId);
+    if (price <= 0 || (collectibleBackpack[defId] || 0) < 1) return;
+    setCoins((c) => c + price);
+    setCollectibleBackpack((bp) => {
+      const next = { ...bp };
+      const left = (next[defId] || 0) - 1;
+      if (left <= 0) delete next[defId];
+      else next[defId] = left;
+      return next;
+    });
+  };
+
+  const handleMoveCollectibleToExhibition = (defId: string) => {
+    if (!getCollectibleDef(defId)) return;
+    if (exhibitionCollectibles.length >= MAX_EXHIBITION_COLLECTIBLES) return;
+    if ((collectibleBackpack[defId] || 0) < 1) return;
+    const nextBp = { ...collectibleBackpack };
+    const left = (nextBp[defId] || 0) - 1;
+    if (left <= 0) delete nextBp[defId];
+    else nextBp[defId] = left;
+    setCollectibleBackpack(nextBp);
+    setExhibitionCollectibles((ex) => [...ex, defId]);
+  };
+
+  const totalExhibitionFruitUnits = Object.values(exhibitionFruits).reduce((a, n) => a + n, 0);
+
+  const handleMoveFruitToExhibition = (fruitId: string) => {
+    if ((harvestedFruits[fruitId] || 0) < 1) return;
+    if (totalExhibitionFruitUnits >= MAX_EXHIBITION_FRUIT_UNITS) return;
+    setHarvestedFruits((fruits) => ({
+      ...fruits,
+      [fruitId]: fruits[fruitId] - 1,
+    }));
+    setExhibitionFruits((ex) => ({
+      ...ex,
+      [fruitId]: (ex[fruitId] || 0) + 1,
+    }));
+  };
+
+  const handleRemoveFruitFromExhibition = (fruitId: string) => {
+    if ((exhibitionFruits[fruitId] || 0) < 1) return;
+    setExhibitionFruits((ex) => {
+      const next = { ...ex };
+      const left = (next[fruitId] || 0) - 1;
+      if (left <= 0) delete next[fruitId];
+      else next[fruitId] = left;
+      return next;
+    });
+    setHarvestedFruits((fruits) => ({
+      ...fruits,
+      [fruitId]: (fruits[fruitId] || 0) + 1,
+    }));
+  };
+
+  const handleRemoveCollectibleFromExhibition = (displayIndex: number) => {
+    const defId = exhibitionCollectibles[displayIndex];
+    if (!defId) return;
+    setExhibitionCollectibles((ex) => ex.filter((_, i) => i !== displayIndex));
+    setCollectibleBackpack((bp) => ({
+      ...bp,
+      [defId]: (bp[defId] || 0) + 1,
+    }));
   };
 
   const modalOpen = showVictory || showDefeat;
@@ -502,8 +609,11 @@ export default function Component() {
           seedInventory={seedInventory}
           exhibitionPlants={exhibitionPlants}
           harvestedFruits={harvestedFruits}
+          collectibleBackpack={collectibleBackpack}
+          exhibitionCollectibles={exhibitionCollectibles}
+          exhibitionFruits={exhibitionFruits}
           itemInventory={itemInventory}
-          sunBoostUntil={sunBoostUntil}
+          sunBoostActive={sunBoostActive}
           wateringBoostUntil={wateringBoostUntil}
           wateringNeedsRefill={wateringNeedsRefill}
           ownsGardenGloves={ownsGardenGloves}
@@ -512,7 +622,7 @@ export default function Component() {
           ownsAdvancedSoil={ownsAdvancedSoil}
           ownsSuperSoil={ownsSuperSoil}
           persistentSlotSoil={persistentSlotSoil}
-          pendingGloveHarvestBonus={pendingGloveHarvestBonus}
+          pendingGloveDoubleNextHarvest={pendingGloveDoubleNextHarvest}
           growthOpts={growthOpts}
           onBackToMenu={handleBackToMenu}
           onBuySeed={handleBuySeed}
@@ -522,9 +632,14 @@ export default function Component() {
           onHarvestPlant={handleHarvestPlant}
           onMoveToExhibition={handleMoveToExhibition}
           onSellFruit={handleSellFruit}
+          onSellCollectible={handleSellCollectible}
+          onMoveCollectibleToExhibition={handleMoveCollectibleToExhibition}
+          onRemoveCollectibleFromExhibition={handleRemoveCollectibleFromExhibition}
+          onMoveFruitToExhibition={handleMoveFruitToExhibition}
+          onRemoveFruitFromExhibition={handleRemoveFruitFromExhibition}
           onShovelPlant={handleShovelPlant}
           onUseGardenGloves={handleUseGardenGloves}
-          onActivateSun={handleActivateSun}
+          onToggleSun={handleToggleSun}
           onActivateWatering={handleActivateWatering}
           onUseWaterRefill={handleUseWaterRefill}
           onLayPersistentSoil={handleLayPersistentSoil}
